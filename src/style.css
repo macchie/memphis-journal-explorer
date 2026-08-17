@@ -11,7 +11,15 @@
 .icon { @apply h-[1.05rem] w-[1.05rem] fill-none stroke-current; stroke-width: 1.8; }
 .control { @apply h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-ink outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-pine focus:ring-2 focus:ring-pine/15; }
 .label { @apply mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500; }
-.drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; }
+.drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
 .brand-mark { filter: drop-shadow(0 5px 10px rgba(37, 99, 235, 0.3)); }
-.button-secondary { @apply border border-blue-200 bg-white text-blue-700 hover:border-blue-300 hover:bg-blue-50; }
-.button-range { @apply text-blue-700 hover:bg-blue-100; }
+.button-secondary { @apply border border-blue-200 bg-white text-blue-700 transition hover:border-blue-300 hover:bg-blue-50; }
+.button-range { @apply text-blue-700 transition hover:bg-blue-100; }
+
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+[data-close].fixed { animation: fade-in 0.2s ease-out; }
+tbody .bg-slate-100 { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@media (prefers-reduced-motion: reduce) { .drawer, [data-close].fixed, tbody .bg-slate-100 { animation: none; } }
