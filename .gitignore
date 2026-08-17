@@ -6,3 +6,8 @@ node_modules/
 .idea/
 .vscode/
 dist/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/

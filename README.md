@@ -6,11 +6,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=fff)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=fff)](https://vitejs.dev)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss&logoColor=fff)](https://tailwindcss.com)
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=fff)](https://tauri.app)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](#license)
 
 A clean web app, backed by a lightweight [Bun](https://bun.sh) server, for browsing, analyzing, and
 auditing point-of-sale transactions. The backend runs **read-only** queries against the PostgreSQL
 `rdb_log` tables; the UI turns them into a searchable ledger, sales analytics, and a loss-prevention view.
+Runs in the browser or as a native **desktop app** via [Tauri](https://tauri.app).
 
 ## Features
 
@@ -48,6 +50,23 @@ make typecheck   # type-check with tsc
 make start       # run the production API server
 ```
 
+## Desktop app (Tauri)
+
+The web UI and the Bun backend can be packaged into a single native desktop app with
+[Tauri](https://tauri.app). The backend is compiled to a standalone binary and shipped as a **sidecar**
+that the app launches on startup; the UI runs in the system webview.
+
+**Extra prerequisites:** the [Rust toolchain](https://rustup.rs) and the
+[Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS
+(e.g. `webkit2gtk` on Linux).
+
+```bash
+make app-dev     # run the desktop app in development
+make app         # build a distributable (src-tauri/target/release/bundle/)
+```
+
+Both targets first compile the backend into a sidecar via `make sidecar`.
+
 ## Configuration
 
 | Variable            | Default | Description                     |
@@ -74,6 +93,8 @@ All queries are `SELECT`-only.
 ```
 server/index.ts   Bun API — read-only PostgreSQL proxy
 src/main.ts       Frontend app — vanilla TypeScript + Tailwind
+src-tauri/        Tauri v2 desktop shell (spawns the API as a sidecar)
+scripts/          Dev orchestration and sidecar build
 resources/        Database schema and project notes
 ```
 

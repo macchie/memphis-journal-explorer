@@ -23,8 +23,11 @@ async function remoteQuery(query: string): Promise<Row[]> {
   return JSON.parse(result);
 }
 
+// Allow the bundled desktop webview (a different origin) to call this local API.
+const CORS = { "Access-Control-Allow-Origin": "*" };
+
 function response(data: unknown, status = 200) {
-  return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
+  return Response.json(data, { status, headers: { "Cache-Control": "no-store", ...CORS } });
 }
 
 // Per-header discount total (non-voided) — reused by the list, summary, and exceptions queries.
@@ -91,7 +94,7 @@ async function transactionsCsv(filters: Filters) {
     r.bl_loyalty ? "yes" : "no",
   ].map(cell).join(","));
   const csv = [header.join(","), ...body].join("\n");
-  return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`, "Cache-Control": "no-store" } });
+  return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`, "Cache-Control": "no-store", ...CORS } });
 }
 
 async function insights(filters: Filters) {
@@ -164,6 +167,7 @@ Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
     const filters = Object.fromEntries(url.searchParams) as Filters;
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "Access-Control-Allow-Methods": "GET, OPTIONS" } });
     if (url.pathname === "/api/health") return response({ ok: true });
     try {
       if (url.pathname === "/api/facets") {
@@ -184,7 +188,7 @@ Bun.serve({
     } catch (error) {
       return response({ error: error instanceof Error ? error.message : "Query failed" }, 502);
     }
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", { status: 404, headers: { ...CORS } });
   },
 });
 

@@ -44,6 +44,21 @@ const state = {
   pendingSel: null as string | null,
 };
 
+// In the browser the API is same-origin (Vite proxies /api); inside the Tauri desktop shell the UI is
+// served from tauri:// and talks to the bundled Bun sidecar on localhost:3000.
+const IN_TAURI = typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
+const API_BASE = IN_TAURI ? "http://localhost:3000" : "";
+const api = (path: string) => `${API_BASE}${path}`;
+async function apiFetch(path: string, init?: RequestInit) {
+  const attempts = IN_TAURI ? 10 : 1; // tolerate the sidecar still booting on desktop cold start
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fetch(api(path), init); }
+    catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 400)); }
+  }
+  throw lastError;
+}
+
 const formatMoney = (value: unknown) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(Number(value ?? 0) / 100);
 const formatPercentage = (value: unknown) => `${(Number(value ?? 0) / 100).toFixed(2)}%`;
 // The API labels naive POS wall-clock timestamps as UTC (trailing "Z"), so render them in UTC to
@@ -69,7 +84,7 @@ function pageHeaderMarkup() {
     exceptions: { k: "Loss prevention", t: "Exceptions", d: "Voids, refunds and heavy discounts — ranked by risk." },
   }[state.view];
   const ranges = `<div class="flex rounded-md border border-blue-200 bg-white p-1 text-sm shadow-sm">${[[0, "Today"], [6, "7 days"], [29, "30 days"]].map(([days, label]) => `<button class="range button-range rounded px-3 py-1.5 ${state.range === days ? "bg-pine text-white shadow-sm hover:bg-blue-600 hover:text-white" : ""}" data-days="${days}">${label}</button>`).join("")}</div>`;
-  const exportBtn = state.view === "transactions" ? `<a class="button-secondary flex h-[38px] items-center gap-2 rounded-md px-3 text-sm font-medium" href="/api/transactions.csv?${currentFilters()}">${icon("download")}<span class="hidden sm:inline">Export CSV</span></a>` : "";
+  const exportBtn = state.view === "transactions" ? `<button class="export-csv button-secondary flex h-[38px] items-center gap-2 rounded-md px-3 text-sm font-medium" ${state.summary.total ? "" : "disabled"}>${icon("download")}<span class="hidden sm:inline">Export CSV</span></button>` : "";
   return `<section class="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">${meta.k}</p><h1 class="mt-1 font-display text-3xl font-semibold">${meta.t}</h1><p class="mt-1 text-sm text-slate-500">${meta.d}</p></div><div class="flex items-end gap-2">${ranges}${exportBtn}</div></section>`;
 }
 
@@ -266,7 +281,7 @@ function syncFilters() {
 
 async function loadFacets() {
   try {
-    const result = await fetch("/api/facets");
+    const result = await apiFetch("/api/facets");
     if (!result.ok) return;
     state.facets = await result.json();
     render();
@@ -290,7 +305,7 @@ async function loadTransactions() {
   query.set("sort", state.sort);
   query.set("direction", state.direction);
   try {
-    const result = await fetch(`/api/transactions?${query}`);
+    const result = await apiFetch(`/api/transactions?${query}`);
     if (!result.ok) throw new Error("Unable to load transactions");
     const payload = await result.json();
     state.rows = payload.rows;
@@ -312,7 +327,7 @@ async function loadInsights() {
   state.error = "";
   render();
   try {
-    const result = await fetch(`/api/insights?${currentFilters()}`);
+    const result = await apiFetch(`/api/insights?${currentFilters()}`);
     if (!result.ok) throw new Error("Unable to load insights");
     state.insights = await result.json();
   } catch (error) {
@@ -329,7 +344,7 @@ async function loadExceptions() {
   state.error = "";
   render();
   try {
-    const result = await fetch(`/api/exceptions?${currentFilters()}`);
+    const result = await apiFetch(`/api/exceptions?${currentFilters()}`);
     if (!result.ok) throw new Error("Unable to load exceptions");
     state.exceptions = await result.json();
   } catch (error) {
@@ -355,7 +370,7 @@ async function inspectTransaction(key: string) {
   state.drawerTab = "detail";
   render();
   try {
-    const result = await fetch(`/api/transactions/${key}`);
+    const result = await apiFetch(`/api/transactions/${key}`);
     if (!result.ok) throw new Error("Unable to load details");
     state.details = await result.json();
   } catch {
@@ -400,7 +415,26 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>(".inspect").forEach((button) => button.addEventListener("click", () => inspectTransaction(button.dataset.key!)));
   document.querySelectorAll<HTMLElement>("[data-close]").forEach((element) => element.addEventListener("click", closeDrawer));
   document.querySelectorAll<HTMLButtonElement>(".range").forEach((button) => button.addEventListener("click", () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(); from.setDate(to.getDate() - days); state.filters.dateFrom = from.toISOString().slice(0, 10); state.filters.dateTo = to.toISOString().slice(0, 10); state.range = days; state.page = 1; loadView(); }));
+  document.querySelector<HTMLButtonElement>(".export-csv")?.addEventListener("click", exportCsv);
   bindDrawerBody();
+}
+
+// Download the filtered result set as CSV via a blob so it works in both the browser and the desktop shell.
+async function exportCsv() {
+  try {
+    const result = await apiFetch(`/api/transactions.csv?${currentFilters()}`);
+    if (!result.ok) throw new Error("Export failed");
+    const url = URL.createObjectURL(await result.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    /* surface nothing intrusive; the button stays available to retry */
+  }
 }
 
 // --- init -------------------------------------------------------------------
