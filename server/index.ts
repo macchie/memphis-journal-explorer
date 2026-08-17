@@ -1,5 +1,9 @@
-const REMOTE_LOOKUP_SERVER = `demo.elvispos.com`;
-const REMOTE_LOOKUP_URL = `http://${REMOTE_LOOKUP_SERVER}:7392/api/db-operations/remote-lookup`;
+// Active remote database host. Defaults to the env value but can be switched at runtime via POST /api/server
+// (the desktop app persists the chosen server per user and re-applies it on launch).
+const DEFAULT_SERVER = Bun.env.REMOTE_LOOKUP_SERVER ?? "demo.elvispos.com";
+const SERVER_PATTERN = /^[a-zA-Z0-9.\-]+(:\d{1,5})?$/;
+let remoteServer = DEFAULT_SERVER;
+const remoteLookupUrl = () => `http://${remoteServer.includes(":") ? remoteServer : `${remoteServer}:7392`}/api/db-operations/remote-lookup`;
 const PORT = Number(Bun.env.PORT ?? 3000);
 
 type Filters = Record<string, string | undefined>;
@@ -11,11 +15,17 @@ const isNumber = (value: string | undefined) => Boolean(value && /^-?\d+(\.\d+)?
 const num = (value: unknown) => Number(value ?? 0);
 
 async function remoteQuery(query: string): Promise<Row[]> {
-  const response = await fetch(REMOTE_LOOKUP_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request: { command: 1003, query } }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(remoteLookupUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request: { command: 1003, query } }),
+      signal: AbortSignal.timeout(15000), // fail fast when the selected server is unreachable
+    });
+  } catch {
+    throw new Error(`Could not reach ${remoteServer}`);
+  }
   if (!response.ok) throw new Error(`Remote database returned ${response.status}`);
   const result = (await response.text()).trim();
   if (!result || result.startsWith("NO DATA") || result.startsWith("NO RECORD FOUND")) return [];
@@ -167,9 +177,19 @@ Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
     const filters = Object.fromEntries(url.searchParams) as Filters;
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "Access-Control-Allow-Methods": "GET, OPTIONS" } });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...CORS, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
     if (url.pathname === "/api/health") return response({ ok: true });
     try {
+      if (url.pathname === "/api/server") {
+        if (request.method === "POST") {
+          const body = (await request.json().catch(() => ({}))) as { address?: string };
+          const address = String(body.address ?? "").trim();
+          if (!SERVER_PATTERN.test(address)) return response({ error: "Invalid server address" }, 400);
+          remoteServer = address;
+          return response({ server: remoteServer });
+        }
+        return response({ server: remoteServer });
+      }
       if (url.pathname === "/api/facets") {
         const [stores, terminals, operators] = await Promise.all([
           remoteQuery("SELECT DISTINCT n0_unique_str_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"),

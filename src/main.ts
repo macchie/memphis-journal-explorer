@@ -24,6 +24,7 @@ type Flagged = Transaction & { reasons: string[]; score: number };
 type Operator = { operator: string; txns: number; voids: number; refunds: number; voidRate: number; risk: number };
 type Exceptions = { flagged: Flagged[]; operators: Operator[] };
 type View = "transactions" | "insights" | "exceptions";
+type Server = { id: string; name: string; address: string };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const state = {
@@ -42,6 +43,11 @@ const state = {
   detailError: false,
   drawerTab: "detail" as "detail" | "receipt",
   pendingSel: null as string | null,
+  servers: [] as Server[],
+  selectedServerId: null as string | null,
+  serversReady: false,
+  manageOpen: false,
+  editingId: null as string | null,
 };
 
 // In the browser the API is same-origin (Vite proxies /api); inside the Tauri desktop shell the UI is
@@ -59,6 +65,80 @@ async function apiFetch(path: string, init?: RequestInit) {
   throw lastError;
 }
 
+// --- server list persistence ------------------------------------------------
+// Desktop: stored in a JSON file in the OS config dir via Tauri commands. Browser: localStorage fallback.
+const SERVER_ADDRESS = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/;
+const STORE_KEY = "rdblog.servers";
+type StoredConfig = { servers: Server[]; selectedId: string | null };
+const invoke = (cmd: string, args?: Record<string, unknown>) => (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } } }).__TAURI__.core.invoke(cmd, args);
+
+async function loadServerConfig(): Promise<StoredConfig> {
+  try {
+    const raw = IN_TAURI ? (await invoke("load_servers") as string) : localStorage.getItem(STORE_KEY);
+    const parsed = raw ? JSON.parse(raw) as StoredConfig : null;
+    if (parsed && Array.isArray(parsed.servers)) return { servers: parsed.servers, selectedId: parsed.selectedId ?? null };
+  } catch { /* fall through to empty */ }
+  return { servers: [], selectedId: null };
+}
+
+async function saveServerConfig() {
+  const raw = JSON.stringify({ servers: state.servers, selectedId: state.selectedServerId });
+  try {
+    if (IN_TAURI) await invoke("save_servers", { data: raw });
+    else localStorage.setItem(STORE_KEY, raw);
+  } catch { /* best effort */ }
+}
+
+const selectedServer = () => state.servers.find((s) => s.id === state.selectedServerId) ?? null;
+
+// Point the backend at the chosen remote host before running any queries.
+async function activateServer(address: string) {
+  try {
+    await apiFetch("/api/server", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+  } catch { /* the backend may be booting; subsequent queries surface the error */ }
+}
+
+async function connectTo(id: string | null) {
+  state.selectedServerId = id;
+  state.facets = null;
+  await saveServerConfig();
+  const server = selectedServer();
+  render();
+  if (!server) return;
+  await activateServer(server.address);
+  loadFacets();
+  loadView();
+}
+
+async function addServer(name: string, address: string) {
+  const server: Server = { id: crypto.randomUUID(), name: name.trim(), address: address.trim() };
+  state.servers.push(server);
+  await saveServerConfig();
+  return server;
+}
+
+async function updateServer(id: string, name: string, address: string) {
+  const server = state.servers.find((s) => s.id === id);
+  if (!server) return;
+  server.name = name.trim();
+  server.address = address.trim();
+  state.editingId = null;
+  await saveServerConfig();
+  if (state.selectedServerId === id) await activateServer(server.address);
+  render();
+}
+
+async function deleteServer(id: string) {
+  state.servers = state.servers.filter((s) => s.id !== id);
+  if (state.editingId === id) state.editingId = null;
+  if (state.selectedServerId === id) {
+    await connectTo(state.servers[0]?.id ?? null);
+    return;
+  }
+  await saveServerConfig();
+  render();
+}
+
 const formatMoney = (value: unknown) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(Number(value ?? 0) / 100);
 const formatPercentage = (value: unknown) => `${(Number(value ?? 0) / 100).toFixed(2)}%`;
 // The API labels naive POS wall-clock timestamps as UTC (trailing "Z"), so render them in UTC to
@@ -72,9 +152,32 @@ const logo = () => `<svg class="brand-mark h-10 w-10" viewBox="0 0 40 40" aria-l
 
 // --- toolbar + shared chrome ------------------------------------------------
 
+function serverSwitcherMarkup() {
+  if (!state.servers.length) return "";
+  const options = state.servers.map((s) => `<option value="${clean(s.id)}" ${s.id === state.selectedServerId ? "selected" : ""}>${clean(s.name)}</option>`).join("");
+  return `<div class="flex items-center gap-1.5"><span class="text-blue-100">${icon("server")}</span><select class="server-select h-9 rounded-md border border-white/25 bg-white/10 px-2 text-sm font-medium text-white outline-none focus:border-white/50 [&>option]:text-ink" aria-label="Active server">${options}</select><button class="manage-servers flex h-9 w-9 items-center justify-center rounded-md text-blue-50 transition hover:bg-white/10" title="Manage servers" aria-label="Manage servers">${icon("settings")}</button></div>`;
+}
+
 function toolbarMarkup() {
   const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${state.view === view ? "bg-white text-blue-700 shadow-sm" : "text-blue-50 hover:bg-white/10"}" data-view="${view}">${icon(ic)}<span class="hidden sm:inline">${label}</span></button>`;
-  return `<header class="border-b border-blue-400 bg-blue-600 text-white shadow-lg"><div class="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-5 py-4 md:px-8"><div class="flex items-center gap-3">${logo()}<div><p class="font-display text-xl font-semibold leading-none">Sales Explorer</p><p class="mt-1 text-xs tracking-wide text-blue-100">Transaction intelligence</p></div></div><nav class="flex gap-1 rounded-lg bg-white/10 p-1">${tab("transactions", "Transactions", "list")}${tab("insights", "Insights", "chart")}${tab("exceptions", "Exceptions", "alert")}</nav></div></header>`;
+  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-lg bg-white/10 p-1">${tab("transactions", "Transactions", "list")}${tab("insights", "Insights", "chart")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
+  return `<header class="border-b border-blue-400 bg-blue-600 text-white shadow-lg"><div class="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-5 py-4 md:px-8"><div class="flex items-center gap-3">${logo()}<div><p class="font-display text-xl font-semibold leading-none">Sales Explorer</p><p class="mt-1 text-xs tracking-wide text-blue-100">Transaction intelligence</p></div></div><div class="flex flex-wrap items-center gap-3">${nav}${serverSwitcherMarkup()}</div></div></header>`;
+}
+
+function interstitialMarkup() {
+  const existing = state.servers.length
+    ? `<div class="mt-6 border-t border-slate-100 pt-5"><div class="mb-2 flex items-center justify-between"><p class="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Saved servers</p><button class="manage-servers text-xs font-semibold text-pine hover:text-ink">Manage</button></div><div class="space-y-2">${state.servers.map((s) => `<button class="pick-server flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2.5 text-left text-sm transition hover:border-pine hover:bg-mist/50" data-id="${clean(s.id)}"><span class="min-w-0 truncate"><span class="font-semibold text-ink">${clean(s.name)}</span> <span class="text-slate-400">${clean(s.address)}</span></span><span class="text-pine">${icon("chevron")}</span></button>`).join("")}</div></div>`
+    : "";
+  return `<main class="mx-auto flex min-h-[72vh] max-w-lg flex-col justify-center px-5 py-10"><div class="rounded-xl border border-blue-100 bg-white p-8 shadow-panel"><div class="mb-6 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-lg bg-mist text-pine">${icon("server")}</span><div><h1 class="font-display text-2xl font-semibold">Connect a server</h1><p class="text-sm text-slate-500">Add a database server to start exploring transactions.</p></div></div><form id="server-form" class="space-y-3"><label class="block"><span class="label">Server name</span><input class="control" name="name" placeholder="e.g. Production" autocomplete="off" required /></label><label class="block"><span class="label">Server address</span><input class="control" name="address" placeholder="e.g. demo.elvispos.com or 192.168.1.123" autocomplete="off" required /></label><p class="server-error hidden text-xs font-medium text-clay"></p><button class="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("plus")}Add &amp; connect</button></form>${existing}</div></main>`;
+}
+
+function manageModalMarkup() {
+  if (!state.manageOpen) return "";
+  const editing = state.servers.find((s) => s.id === state.editingId) ?? null;
+  const list = state.servers.length
+    ? state.servers.map((s) => `<div class="flex items-center justify-between gap-2 rounded-md border px-3 py-2.5 ${s.id === state.selectedServerId ? "border-pine bg-mist/40" : "border-slate-200"}"><div class="min-w-0"><p class="truncate text-sm font-semibold text-ink">${clean(s.name)}${s.id === state.selectedServerId ? badge("Active", "sky") : ""}</p><p class="truncate text-xs text-slate-500">${clean(s.address)}</p></div><div class="flex shrink-0 gap-1"><button class="edit-server rounded p-1.5 text-slate-500 transition hover:bg-slate-100" data-id="${clean(s.id)}" title="Edit" aria-label="Edit server">${icon("pencil")}</button><button class="delete-server rounded p-1.5 text-clay transition hover:bg-red-50" data-id="${clean(s.id)}" title="Delete" aria-label="Delete server">${icon("trash")}</button></div></div>`).join("")
+    : `<p class="rounded-md border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-400">No servers yet.</p>`;
+  return `<div class="fixed inset-0 z-40 bg-ink/30" data-close-modal></div><div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"><div class="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-2xl"><header class="flex items-center justify-between border-b border-slate-100 px-5 py-4"><h2 class="font-display text-lg font-semibold">Manage servers</h2><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close-modal aria-label="Close">${icon("close")}</button></header><div class="max-h-[46vh] space-y-2 overflow-y-auto px-5 py-4">${list}</div><form id="manage-form" class="space-y-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4"><p class="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">${editing ? "Edit server" : "Add server"}</p><label class="block"><span class="label">Name</span><input class="control" name="name" value="${clean(editing?.name ?? "")}" placeholder="Production" autocomplete="off" required /></label><label class="block"><span class="label">Address</span><input class="control" name="address" value="${clean(editing?.address ?? "")}" placeholder="demo.elvispos.com or 192.168.1.123" autocomplete="off" required /></label><p class="server-error hidden text-xs font-medium text-clay"></p><div class="flex gap-2"><button class="flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white transition hover:bg-blue-600">${editing ? "Save changes" : `${icon("plus")}Add server`}</button>${editing ? `<button type="button" class="cancel-edit button-secondary h-10 rounded-md px-3 text-sm font-medium">Cancel</button>` : ""}</div></form></div></div>`;
 }
 
 function pageHeaderMarkup() {
@@ -85,7 +188,8 @@ function pageHeaderMarkup() {
   }[state.view];
   const ranges = `<div class="flex rounded-md border border-blue-200 bg-white p-1 text-sm shadow-sm">${[[0, "Today"], [6, "7 days"], [29, "30 days"]].map(([days, label]) => `<button class="range button-range rounded px-3 py-1.5 ${state.range === days ? "bg-pine text-white shadow-sm hover:bg-blue-600 hover:text-white" : ""}" data-days="${days}">${label}</button>`).join("")}</div>`;
   const exportBtn = state.view === "transactions" ? `<button class="export-csv button-secondary flex h-[38px] items-center gap-2 rounded-md px-3 text-sm font-medium" ${state.summary.total ? "" : "disabled"}>${icon("download")}<span class="hidden sm:inline">Export CSV</span></button>` : "";
-  return `<section class="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">${meta.k}</p><h1 class="mt-1 font-display text-3xl font-semibold">${meta.t}</h1><p class="mt-1 text-sm text-slate-500">${meta.d}</p></div><div class="flex items-end gap-2">${ranges}${exportBtn}</div></section>`;
+  // return `<section class="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">${meta.k}</p><h1 class="mt-1 font-display text-3xl font-semibold">${meta.t}</h1><p class="mt-1 text-sm text-slate-500">${meta.d}</p></div><div class="flex items-end gap-2">${ranges}${exportBtn}</div></section>`;
+  return `<section class="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">${meta.k}</p><h1 class="mt-1 font-display text-3xl font-semibold">${meta.t}</h1><p class="mt-1 text-sm text-slate-500">${meta.d}</p></div><div class="flex items-end gap-2">${exportBtn}</div></section>`;
 }
 
 function select(name: string, label: string, placeholder: string, options: string[] = []) {
@@ -234,8 +338,14 @@ function drawerMarkup() {
 // --- render + state sync ----------------------------------------------------
 
 function render() {
+  if (!state.serversReady) { app.innerHTML = ""; return; }
+  if (!selectedServer()) {
+    app.innerHTML = `${toolbarMarkup()}${interstitialMarkup()}${manageModalMarkup()}`;
+    bindEvents();
+    return;
+  }
   const content = state.view === "insights" ? insightsMarkup() : state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
-  app.innerHTML = `${toolbarMarkup()}<main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${filterMarkup()}${content}</main>${drawerMarkup()}`;
+  app.innerHTML = `${toolbarMarkup()}<main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${filterMarkup()}${content}</main>${drawerMarkup()}${manageModalMarkup()}`;
   syncUrl();
   bindEvents();
 }
@@ -416,7 +526,45 @@ function bindEvents() {
   document.querySelectorAll<HTMLElement>("[data-close]").forEach((element) => element.addEventListener("click", closeDrawer));
   document.querySelectorAll<HTMLButtonElement>(".range").forEach((button) => button.addEventListener("click", () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(); from.setDate(to.getDate() - days); state.filters.dateFrom = from.toISOString().slice(0, 10); state.filters.dateTo = to.toISOString().slice(0, 10); state.range = days; state.page = 1; loadView(); }));
   document.querySelector<HTMLButtonElement>(".export-csv")?.addEventListener("click", exportCsv);
+  bindServerEvents();
   bindDrawerBody();
+}
+
+function readServerForm(form: HTMLFormElement): { name: string; address: string } | null {
+  const data = new FormData(form);
+  const name = String(data.get("name") ?? "").trim();
+  const address = String(data.get("address") ?? "").trim();
+  const error = form.querySelector<HTMLElement>(".server-error");
+  const fail = (message: string) => { if (error) { error.textContent = message; error.classList.remove("hidden"); } return null; };
+  if (!name) return fail("Please enter a server name.");
+  if (!SERVER_ADDRESS.test(address)) return fail("Enter a valid host or IP, e.g. demo.elvispos.com or 192.168.1.123");
+  return { name, address };
+}
+
+function bindServerEvents() {
+  document.querySelector<HTMLSelectElement>(".server-select")?.addEventListener("change", (event) => connectTo((event.target as HTMLSelectElement).value));
+  document.querySelectorAll<HTMLButtonElement>(".manage-servers").forEach((button) => button.addEventListener("click", () => { state.manageOpen = true; state.editingId = null; render(); }));
+  document.querySelectorAll<HTMLElement>("[data-close-modal]").forEach((element) => element.addEventListener("click", () => { state.manageOpen = false; state.editingId = null; render(); }));
+  document.querySelectorAll<HTMLButtonElement>(".edit-server").forEach((button) => button.addEventListener("click", () => { state.editingId = button.dataset.id!; render(); }));
+  document.querySelector<HTMLButtonElement>(".cancel-edit")?.addEventListener("click", () => { state.editingId = null; render(); });
+  document.querySelectorAll<HTMLButtonElement>(".delete-server").forEach((button) => button.addEventListener("click", () => deleteServer(button.dataset.id!)));
+  document.querySelectorAll<HTMLButtonElement>(".pick-server").forEach((button) => button.addEventListener("click", () => connectTo(button.dataset.id!)));
+  document.querySelector<HTMLFormElement>("#server-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = readServerForm(event.target as HTMLFormElement);
+    if (!values) return;
+    const server = await addServer(values.name, values.address);
+    connectTo(server.id);
+  });
+  document.querySelector<HTMLFormElement>("#manage-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const values = readServerForm(form);
+    if (!values) return;
+    if (state.editingId) { await updateServer(state.editingId, values.name, values.address); return; }
+    await addServer(values.name, values.address);
+    render();
+  });
 }
 
 // Download the filtered result set as CSV via a blob so it works in both the browser and the desktop shell.
@@ -439,7 +587,18 @@ async function exportCsv() {
 
 // --- init -------------------------------------------------------------------
 
-readUrl();
-render();
-loadFacets();
-loadView().then(() => { if (state.pendingSel) { const key = state.pendingSel; state.pendingSel = null; if (findRow(key)) inspectTransaction(key); } });
+async function init() {
+  readUrl();
+  const config = await loadServerConfig();
+  state.servers = config.servers;
+  state.selectedServerId = config.selectedId && config.servers.some((s) => s.id === config.selectedId) ? config.selectedId : null;
+  state.serversReady = true;
+  render();
+  const server = selectedServer();
+  if (!server) return; // first-run interstitial handles server creation
+  await activateServer(server.address);
+  loadFacets();
+  loadView().then(() => { if (state.pendingSel) { const key = state.pendingSel; state.pendingSel = null; if (findRow(key)) inspectTransaction(key); } });
+}
+
+init();

@@ -24,6 +24,8 @@ Runs in the browser or as a native **desktop app** via [Tauri](https://tauri.app
 - **Insights** — revenue by day, hour, store, and operator, and top-selling products.
 - **Exceptions** — a loss-prevention radar that flags voids, refunds, and heavy discounts, ranked by
   risk, with an operator risk leaderboard.
+- **Multiple servers** — save named database servers (host or IP) and switch between them from the
+  toolbar; the desktop app persists them per user, the browser build uses `localStorage`.
 - **Shareable URLs** — filters, sort, view, and the open transaction are encoded in the address bar.
 - Correct POS-local time handling; suspended and training transactions are excluded from sales figures.
 
@@ -69,17 +71,22 @@ Both targets first compile the backend into a sidecar via `make sidecar`.
 
 ## Configuration
 
-| Variable            | Default | Description                     |
-| ------------------- | ------- | ------------------------------- |
-| `PORT`              | `3000`  | API server port                 |
+| Variable               | Default             | Description                                   |
+| ---------------------- | ------------------- | --------------------------------------------- |
+| `PORT`                 | `3000`              | API server port                               |
+| `REMOTE_LOOKUP_SERVER` | `demo.elvispos.com` | Default remote database host (fallback)       |
 
-The remote database endpoint is defined by `REMOTE_LOOKUP_URL` in [`server/index.ts`](server/index.ts).
-All queries are `SELECT`-only.
+The active database host is chosen at runtime from the toolbar and can be changed with
+`POST /api/server`. Saved servers are stored per user: the desktop app writes `servers.json` to the
+OS config directory (e.g. `~/.config/com.elvispos.rdblog-explorer/` on Linux,
+`~/Library/Application Support/…` on macOS, `%APPDATA%\…` on Windows); the browser build uses
+`localStorage`. All queries are `SELECT`-only.
 
 ## API
 
 | Endpoint                   | Description                                        |
 | -------------------------- | ------------------------------------------------- |
+| `GET/POST /api/server`     | Read or switch the active database host           |
 | `GET /api/transactions`    | Paginated list with summary totals                |
 | `GET /api/transactions.csv`| Export the filtered result set as CSV             |
 | `GET /api/transactions/:key`| Detail: items, payments, discounts, tax          |

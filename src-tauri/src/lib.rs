@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -6,10 +7,38 @@ use tauri_plugin_shell::ShellExt;
 /// Holds the compiled Bun API server child so it can be terminated on exit.
 struct Sidecar(Mutex<Option<CommandChild>>);
 
+/// Path to the per-user server list, stored in the OS-standard app config directory
+/// (e.g. ~/.config/<id>/ on Linux, ~/Library/Application Support/<id>/ on macOS, %APPDATA%\<id>\ on Windows).
+fn servers_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("servers.json"))
+}
+
+/// Returns the stored server list JSON, or an empty string when nothing has been saved yet.
+#[tauri::command]
+fn load_servers(app: tauri::AppHandle) -> Result<String, String> {
+    let path = servers_file(&app)?;
+    match fs::read_to_string(&path) {
+        Ok(contents) => Ok(contents),
+        Err(_) => Ok(String::new()),
+    }
+}
+
+/// Persists the server list JSON, creating the config directory if needed.
+#[tauri::command]
+fn save_servers(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    let path = servers_file(&app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, data).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![load_servers, save_servers])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
