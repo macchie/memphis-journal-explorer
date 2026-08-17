@@ -1,4 +1,5 @@
-const REMOTE_LOOKUP_URL = "http://demo.elvispos.com:7392/api/db-operations/remote-lookup";
+const REMOTE_LOOKUP_SERVER = `demo.elvispos.com`;
+const REMOTE_LOOKUP_URL = `http://${REMOTE_LOOKUP_SERVER}:7392/api/db-operations/remote-lookup`;
 const PORT = Number(Bun.env.PORT ?? 3000);
 
 type Filters = Record<string, string | undefined>;
