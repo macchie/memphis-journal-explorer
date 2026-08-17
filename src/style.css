@@ -23,3 +23,11 @@ tbody .bg-slate-100 { animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 @media (prefers-reduced-motion: reduce) { .drawer, [data-close].fixed, tbody .bg-slate-100 { animation: none; } }
+
+@media print {
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  #receipt, #receipt * { visibility: visible; }
+  #receipt { position: absolute; left: 0; top: 0; width: 100%; max-width: none; border: none; box-shadow: none; }
+  .print-receipt { display: none; }
+}
