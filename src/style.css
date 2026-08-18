@@ -3,10 +3,25 @@
 @tailwind utilities;
 
 @layer base {
+  /* Always reserve the scrollbar gutter so the page never shifts horizontally when a scrollbar
+     appears/disappears between re-renders (the main source of the flicker). */
+  html { scrollbar-gutter: stable; overflow-y: auto; }
+  /* While a drawer/modal is open, lock the background scroll so there is a single active scrollbar
+     (the overlay's) instead of two competing ones. The reserved gutter keeps the layout stable. */
+  html.scroll-locked { overflow: hidden; }
   body { @apply m-0 bg-[#f6f8ff] font-body text-ink antialiased; background-image: linear-gradient(rgba(37, 99, 235, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(37, 99, 235, 0.035) 1px, transparent 1px); background-size: 24px 24px; }
   button, input, select { font: inherit; }
   button { @apply cursor-pointer; }
 }
+
+/* Consistent thin, unobtrusive scrollbars everywhere (Firefox + WebKit/Chromium) so toggling them
+   is far less visually jarring. */
+* { scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.45) transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background-color: rgba(100, 116, 139, 0.4); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, 0.65); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Component classes live in @layer components so per-element utilities (e.g. `pl-9` on the search
    input, `pr-8` on the filter selects) reliably override the base padding baked into `.control`. */
@@ -14,7 +29,11 @@
   .icon { @apply h-[1.05rem] w-[1.05rem] fill-none stroke-current; stroke-width: 1.8; }
   .control { @apply h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-ink outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-pine focus:ring-2 focus:ring-pine/15; }
   .label { @apply mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500; }
-  .drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+  /* Compact dark controls used across the filter sub-toolbar. */
+  .toolbar-field { @apply h-9 rounded-md border border-slate-700 bg-slate-800/70 px-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30; }
+  .toolbar-group { @apply flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/70 px-2.5 text-sm text-slate-100 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30 hover:border-slate-600; }
+  .toolbar-bare { @apply min-w-0 border-0 bg-transparent p-0 text-slate-100 outline-none placeholder:text-slate-500 focus:ring-0; }
+  .drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); scrollbar-gutter: stable; }
 }
 .brand-mark { filter: drop-shadow(0 5px 10px rgba(37, 99, 235, 0.3)); }
 .server-select {
