@@ -189,7 +189,7 @@ function windowControlsMarkup() {
   if (!IN_TAURI) return "";
   const maxIcon = isMaximized ? "win-restore" : "win-maximize";
   const maxTitle = isMaximized ? "Restore window" : "Maximize window";
-  return `<div class="flex items-center h-full shrink-0 select-none border-l border-slate-800 ml-2 pl-1"><button class="win-ctrl-btn" id="win-minimize" title="Minimize window" aria-label="Minimize window">${icon("win-minimize")}</button><button class="win-ctrl-btn" id="win-maximize" title="${maxTitle}" aria-label="${maxTitle}">${icon(maxIcon)}</button><button class="win-ctrl-close" id="win-close" title="Close window" aria-label="Close window">${icon("win-close")}</button></div>`;
+  return `<div class="titlebar-window-controls flex items-center h-full shrink-0 select-none border-l border-slate-800 ml-2 pl-1"><button class="win-ctrl-btn" id="win-minimize" title="Minimize window" aria-label="Minimize window">${icon("win-minimize")}</button><button class="win-ctrl-btn" id="win-maximize" title="${maxTitle}" aria-label="${maxTitle}">${icon(maxIcon)}</button><button class="win-ctrl-close" id="win-close" title="Close window" aria-label="Close window">${icon("win-close")}</button></div>`;
 }
 
 function serverSwitcherMarkup() {
@@ -200,12 +200,12 @@ function serverSwitcherMarkup() {
 
 function toolbarMarkup() {
   const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition ${state.view === view ? "bg-slate-800 text-white shadow-sm border-b-2 border-blue-500" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"}" data-view="${view}">${icon(ic)}<span>${label}</span></button>`;
-  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
+  const nav = selectedServer() ? `<nav class="titlebar-nav flex shrink-0 gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
   // `data-tauri-drag-region` is applied to the non-interactive layout containers so the titlebar can be
   // dragged (and double-clicked to maximize) exactly like a native title bar; interactive children
   // (buttons, nav, select) deliberately omit it so their own clicks are not swallowed by the drag.
   const drag = IN_TAURI ? " data-tauri-drag-region" : "";
-  return `<header${drag} class="app-titlebar sticky top-0 z-30 flex h-10 w-full select-none items-center justify-between border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div${drag} class="flex items-center gap-3 shrink-0"><div${drag} class="flex items-center gap-2">${logo()}<span${drag} class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div><div${drag} class="flex items-center gap-3 ml-auto">${nav}${windowControlsMarkup()}</div></header>`;
+  return `<header${drag} class="app-titlebar sticky top-0 z-30 flex min-h-10 w-full select-none items-center gap-3 border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div${drag} class="titlebar-primary flex min-w-0 items-center gap-3"><div${drag} class="flex shrink-0 items-center gap-2">${logo()}<span${drag} class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div>${nav}${windowControlsMarkup()}</header>`;
 }
 
 function interstitialMarkup() {
@@ -236,7 +236,7 @@ function pageHeaderMarkup() {
 function tbSelect(name: string, placeholder: string, options: (string | [string, string])[] = []) {
   const current = state.filters[name] ?? "";
   const option = (opt: string | [string, string]) => { const [value, text] = Array.isArray(opt) ? opt : [opt, opt]; return `<option value="${clean(value)}" ${current === value ? "selected" : ""}>${clean(text)}</option>`; };
-  return `<select class="toolbar-field shrink-0 appearance-none bg-[right_0.5rem_center] bg-no-repeat pr-7 [&>option]:bg-slate-900 [&>option]:text-slate-100 ${current ? "font-medium text-slate-100" : "text-slate-400"}" name="${name}" aria-label="${clean(placeholder)}" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 fill=%22none%22 stroke=%22%2394a3b8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22m3 4.5 3 3 3-3%22/></svg>')"><option value="">${clean(placeholder)}</option>${options.map(option).join("")}</select>`;
+  return `<select class="toolbar-field toolbar-select appearance-none bg-[right_0.5rem_center] bg-no-repeat pr-7 [&>option]:bg-slate-900 [&>option]:text-slate-100 ${current ? "font-medium text-slate-100" : "text-slate-400"}" name="${name}" aria-label="${clean(placeholder)}" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 fill=%22none%22 stroke=%22%2394a3b8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22m3 4.5 3 3 3-3%22/></svg>')"><option value="">${clean(placeholder)}</option>${options.map(option).join("")}</select>`;
 }
 
 // The filter sub-toolbar: same fields/logic as before (form#filters), reorganised into a compact,
@@ -245,11 +245,11 @@ function tbSelect(name: string, placeholder: string, options: (string | [string,
 // grouped range controls; Clear (icon-only) and Apply sit on the right.
 function subToolbarMarkup() {
   const val = (name: string) => clean(state.filters[name] ?? "");
-  const search = `<div class="relative min-w-0 flex-1"><span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-8" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
-  const period = `<div class="toolbar-group"><input type="date" name="dateFrom" value="${val("dateFrom")}" class="toolbar-bare w-[6.75rem]" aria-label="From date" /><span class="text-slate-500">–</span><input type="date" name="dateTo" value="${val("dateTo")}" class="toolbar-bare w-[6.75rem]" aria-label="To date" /></div>`;
+  const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-8" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
+  const period = `<div class="toolbar-group"><input type="date" name="dateFrom" value="${val("dateFrom")}" class="toolbar-bare w-[6.25rem] sm:w-[6.75rem]" aria-label="From date" /><span class="text-slate-500">–</span><input type="date" name="dateTo" value="${val("dateTo")}" class="toolbar-bare w-[6.25rem] sm:w-[6.75rem]" aria-label="To date" /></div>`;
   const amount = `<div class="toolbar-group"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Max amount" /></div>`;
-  const actions = `<div class="flex shrink-0 items-center gap-2"><button type="reset" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-pine px-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
-  return `<div class="sticky top-10 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-nowrap items-center gap-2 px-3 py-2.5">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${period}${amount}${actions}</form></div>`;
+  const actions = `<div class="flex shrink-0 items-center gap-1.5"><button type="reset" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-pine px-3 text-xs font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
+  return `<div class="sticky top-10 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-1.5 px-3 py-2">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${period}${amount}${actions}</form></div>`;
 }
 
 // --- transactions view ------------------------------------------------------
