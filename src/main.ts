@@ -1,4 +1,5 @@
 import "./style.css";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Transaction = {
   dt_time_stamp_st: string;
@@ -11,12 +12,13 @@ type Transaction = {
   discount_total?: number | string;
   bl_refund?: string;
   bl_loyalty?: boolean;
+  bl_voided?: string | number;
 };
 
 type Detail = Record<string, unknown>;
-type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[] };
+type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[]; info: Detail[]; loyalty: Detail[]; alerts: Detail[] };
 type Facets = { stores: string[]; terminals: string[]; operators: string[] };
-type Summary = { total: number; salesTotal: number; refundCount: number; discountTotal: number };
+type Summary = { total: number; salesTotal: number; refundCount: number; voidCount: number; discountTotal: number };
 type Series = { label: string; txns: number; revenue: number };
 type Bar = Series & { qty: number };
 type Insights = { byDay: Series[]; byHour: Series[]; byStore: Bar[]; byOperator: Bar[]; topProducts: Bar[] };
@@ -30,7 +32,7 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 const state = {
   view: "transactions" as View,
   rows: [] as Transaction[],
-  summary: { total: 0, salesTotal: 0, refundCount: 0, discountTotal: 0 } as Summary,
+  summary: { total: 0, salesTotal: 0, refundCount: 0, voidCount: 0, discountTotal: 0 } as Summary,
   page: 1, sort: "date", direction: "desc", hasMore: false,
   loading: false, error: "",
   range: null as number | null,
@@ -52,7 +54,7 @@ const state = {
 
 // In the browser the API is same-origin (Vite proxies /api); inside the Tauri desktop shell the UI is
 // served from tauri:// and talks to the bundled Bun sidecar on localhost:3000.
-const IN_TAURI = typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
+const IN_TAURI = typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__ || (window as any).__TAURI_IPC__);
 const API_BASE = IN_TAURI ? "http://localhost:3000" : "";
 const api = (path: string) => `${API_BASE}${path}`;
 async function apiFetch(path: string, init?: RequestInit) {
@@ -144,24 +146,70 @@ const formatPercentage = (value: unknown) => `${(Number(value ?? 0) / 100).toFix
 // The API labels naive POS wall-clock timestamps as UTC (trailing "Z"), so render them in UTC to
 // show the stored time verbatim rather than re-projecting into the viewer's local zone.
 const formatDate = (value: string) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value));
+const formatTime = (value: string) => new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date(value));
+const formatDuration = (ms: number) => {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+};
 const clean = (value: unknown) => String(value ?? "-").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]!);
 const icon = (name: string) => `<svg class="icon" aria-hidden="true"><use href="#${name}" /></svg>`;
 const keyOf = (row: Transaction) => JSON.stringify({ timestamp: row.dt_time_stamp_st, store: row.n0_unique_str_no, terminal: row.n0_terminal_no, transaction: row.n0_xact_no });
-const badge = (label: string, tone: "amber" | "sky") => `<span class="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone === "amber" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"}">${label}</span>`;
-const logo = () => `<svg class="brand-mark h-10 w-10" viewBox="0 0 40 40" aria-label="Sales Explorer logo" role="img"><rect width="40" height="40" rx="9" fill="#3b82f6"/><path d="M11 13.5h18M11 20h18M11 26.5h11" stroke="#eff6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="27" cy="26.5" r="4" fill="#bfdbfe"/><path d="m25.3 26.5 1.15 1.15 2.25-2.35" stroke="#1e3a8a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const BADGE_TONES: Record<"amber" | "sky" | "red", string> = { amber: "bg-amber-100 text-amber-700", sky: "bg-sky-100 text-sky-700", red: "bg-red-100 text-red-700" };
+const badge = (label: string, tone: "amber" | "sky" | "red") => `<span class="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${BADGE_TONES[tone]}">${label}</span>`;
+const isVoided = (row: Transaction) => row.bl_voided === "1" || row.bl_voided === 1;
+const logo = () => `<svg class="brand-mark h-6 w-6 shrink-0" viewBox="0 0 40 40" aria-label="Sales Explorer logo" role="img"><rect width="40" height="40" rx="9" fill="#3b82f6"/><path d="M11 13.5h18M11 20h18M11 26.5h11" stroke="#eff6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="27" cy="26.5" r="4" fill="#bfdbfe"/><path d="m25.3 26.5 1.15 1.15 2.25-2.35" stroke="#1e3a8a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-// --- toolbar + shared chrome ------------------------------------------------
+let isMaximized = false;
+if (IN_TAURI) {
+  try {
+    const appWin = getCurrentWindow();
+    appWin.isMaximized().then((max) => { isMaximized = max; });
+    appWin.onResized(() => {
+      appWin.isMaximized().then((max) => {
+        if (isMaximized !== max) {
+          isMaximized = max;
+          updateWinControls();
+        }
+      });
+    });
+  } catch { /* best effort */ }
+}
+
+function updateWinControls() {
+  const btn = document.querySelector<HTMLButtonElement>("#win-maximize");
+  if (btn) {
+    const maxIcon = isMaximized ? "win-restore" : "win-maximize";
+    const maxTitle = isMaximized ? "Restore window" : "Maximize window";
+    btn.title = maxTitle;
+    btn.setAttribute("aria-label", maxTitle);
+    btn.innerHTML = icon(maxIcon);
+  }
+}
+
+function windowControlsMarkup() {
+  if (!IN_TAURI) return "";
+  const maxIcon = isMaximized ? "win-restore" : "win-maximize";
+  const maxTitle = isMaximized ? "Restore window" : "Maximize window";
+  return `<div class="flex items-center h-full shrink-0 select-none border-l border-slate-800 ml-2 pl-1"><button class="win-ctrl-btn" id="win-minimize" title="Minimize window" aria-label="Minimize window">${icon("win-minimize")}</button><button class="win-ctrl-btn" id="win-maximize" title="${maxTitle}" aria-label="${maxTitle}">${icon(maxIcon)}</button><button class="win-ctrl-close" id="win-close" title="Close window" aria-label="Close window">${icon("win-close")}</button></div>`;
+}
 
 function serverSwitcherMarkup() {
   if (!state.servers.length) return "";
   const options = state.servers.map((s) => `<option value="${clean(s.id)}" ${s.id === state.selectedServerId ? "selected" : ""}>${clean(s.name)}</option>`).join("");
-  return `<div class="flex items-center gap-1.5"><span class="text-blue-100">${icon("server")}</span><select class="server-select h-9 rounded-md border border-white/25 bg-white/10 px-2 text-sm font-medium text-white outline-none focus:border-white/50 [&>option]:text-ink" aria-label="Active server">${options}</select><button class="manage-servers flex h-9 w-9 items-center justify-center rounded-md text-blue-50 transition hover:bg-white/10" title="Manage servers" aria-label="Manage servers">${icon("settings")}</button></div>`;
+  return `<div class="flex items-center gap-1.5"><div class="relative flex items-center"><span class="pointer-events-none absolute left-2 text-slate-400">${icon("server")}</span><select class="server-select h-7 rounded border border-slate-700/60 bg-slate-800/80 pl-7 pr-6 text-xs font-medium text-slate-200 outline-none transition hover:border-slate-600 hover:bg-slate-700/80 focus:border-blue-500 [&>option]:bg-slate-900 [&>option]:text-slate-100" aria-label="Active server">${options}</select></div><button class="manage-servers flex h-7 w-7 items-center justify-center rounded border border-slate-700/60 bg-slate-800/80 text-slate-400 transition hover:bg-slate-700/80 hover:text-slate-200" title="Manage servers" aria-label="Manage servers">${icon("settings")}</button></div>`;
 }
 
 function toolbarMarkup() {
-  const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${state.view === view ? "bg-white text-blue-700 shadow-sm" : "text-blue-50 hover:bg-white/10"}" data-view="${view}">${icon(ic)}<span class="hidden sm:inline">${label}</span></button>`;
-  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-lg bg-white/10 p-1">${tab("transactions", "Transactions", "list")}${tab("insights", "Insights", "chart")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
-  return `<header class="border-b border-blue-400 bg-blue-600 text-white shadow-lg"><div class="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-5 py-4 md:px-8"><div class="flex items-center gap-3">${logo()}<div><p class="font-display text-xl font-semibold leading-none">Sales Explorer</p><p class="mt-1 text-xs tracking-wide text-blue-100">Transaction intelligence</p></div></div><div class="flex flex-wrap items-center gap-3">${nav}${serverSwitcherMarkup()}</div></div></header>`;
+  const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition ${state.view === view ? "bg-slate-800 text-white shadow-sm border-b-2 border-blue-500" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"}" data-view="${view}">${icon(ic)}<span>${label}</span></button>`;
+  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("insights", "Insights", "chart")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
+  // `data-tauri-drag-region` is applied to the non-interactive layout containers so the titlebar can be
+  // dragged (and double-clicked to maximize) exactly like a native title bar; interactive children
+  // (buttons, nav, select) deliberately omit it so their own clicks are not swallowed by the drag.
+  const drag = IN_TAURI ? " data-tauri-drag-region" : "";
+  return `<header${drag} class="app-titlebar sticky top-0 z-30 flex h-10 w-full select-none items-center justify-between border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div${drag} class="flex items-center gap-3 shrink-0"><div${drag} class="flex items-center gap-2">${logo()}<span${drag} class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div><div${drag} class="flex items-center gap-3 ml-auto">${nav}${windowControlsMarkup()}</div></header>`;
 }
 
 function interstitialMarkup() {
@@ -210,9 +258,10 @@ function filterMarkup() {
 
 function summaryMarkup() {
   const s = state.summary;
-  const nonRefund = Math.max(0, s.total - s.refundCount);
+  // Average is over genuine sales only: exclude both refunds and voided transactions.
+  const sales = Math.max(0, s.total - s.refundCount - s.voidCount);
   const cell = (label: string, value: string, last = false) => `<div class="${last ? "px-5" : "border-r border-[#c7d7ff] px-5 first:pl-0"}"><p class="text-xs font-medium text-slate-600">${label}</p><p class="mt-0.5 text-lg font-semibold tabular-nums">${state.loading ? "…" : value}</p></div>`;
-  return `<section class="mb-5 flex flex-wrap gap-y-3 rounded-lg border border-[#cddcff] bg-mist px-5 py-4 shadow-sm">${cell("Transactions", String(s.total))}${cell("Sales total", formatMoney(s.salesTotal))}${cell("Average sale", formatMoney(nonRefund ? s.salesTotal / nonRefund : 0))}${cell("Discounts", s.discountTotal > 0 ? `-${formatMoney(s.discountTotal)}` : formatMoney(0))}${cell("Refunds", String(s.refundCount), true)}</section>`;
+  return `<section class="mb-5 flex flex-wrap gap-y-3 rounded-lg border border-[#cddcff] bg-mist px-5 py-4 shadow-sm">${cell("Transactions", String(s.total))}${cell("Sales total", formatMoney(s.salesTotal))}${cell("Average sale", formatMoney(sales ? s.salesTotal / sales : 0))}${cell("Discounts", s.discountTotal > 0 ? `-${formatMoney(s.discountTotal)}` : formatMoney(0))}${cell("Refunds", String(s.refundCount))}${cell("Voided", String(s.voidCount), true)}</section>`;
 }
 
 function tableMarkup() {
@@ -224,7 +273,7 @@ function tableMarkup() {
   const body = state.loading
     ? Array.from({ length: 8 }, () => `<tr class="border-b border-slate-100 last:border-0">${Array.from({ length: 9 }, () => `<td class="px-5 py-4"><div class="h-3.5 rounded bg-slate-100"></div></td>`).join("")}</tr>`).join("")
     : state.rows.length
-    ? state.rows.map((row) => `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40"><td class="whitespace-nowrap px-5 py-4 font-medium">${formatDate(row.dt_time_stamp_st)}</td><td class="px-5 py-4 font-semibold tabular-nums text-ink">#${clean(row.n0_xact_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_unique_str_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_terminal_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_operator_no)}</td><td class="whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${Number(row.n2_amount_price) < 0 ? "text-clay" : ""}">${formatMoney(row.n2_amount_price)}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</td><td class="whitespace-nowrap px-5 py-4 tabular-nums">${discountCell(row)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_tot_sold_item)}</td><td class="px-5 py-4 text-right"><button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button></td></tr>`).join("")
+    ? state.rows.map((row) => { const voided = isVoided(row); return `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40 ${voided ? "bg-red-50/40 text-slate-400" : ""}"><td class="whitespace-nowrap px-5 py-4 font-medium">${formatDate(row.dt_time_stamp_st)}</td><td class="px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : "text-ink"}">#${clean(row.n0_xact_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_unique_str_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_terminal_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_operator_no)}</td><td class="whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400 line-through decoration-red-400" : Number(row.n2_amount_price) < 0 ? "text-clay" : ""}">${formatMoney(row.n2_amount_price)}${voided ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</td><td class="whitespace-nowrap px-5 py-4 tabular-nums">${discountCell(row)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_tot_sold_item)}</td><td class="px-5 py-4 text-right"><button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button></td></tr>`; }).join("")
     : emptyState;
   const from = state.rows.length ? (state.page - 1) * 25 + 1 : 0;
   const to = (state.page - 1) * 25 + state.rows.length;
@@ -303,9 +352,88 @@ function section(title: string, rows: Detail[], columns: [string, string][], cur
   return `<section>${heading}<div class="overflow-x-auto border-y border-slate-100"><table class="min-w-full text-sm"><thead class="bg-slate-50 text-left text-xs text-slate-500"><tr>${columns.map(([, label]) => `<th class="px-3 py-2 font-semibold">${label}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr class="border-t border-slate-100">${columns.map(([key]) => `<td class="px-3 py-2.5 ${currencyColumns.includes(key) ? "tabular-nums" : ""}">${currencyColumns.includes(key) ? formatMoney(row[key]) : percentageColumns.includes(key) ? formatPercentage(row[key]) : clean(row[key])}</td>`).join("")}</tr>`).join("")}</tbody>${footer}</table></div></section>`;
 }
 
+// Friendly rendering for the rdb_log_info event trail. Each POS event maps to a label and a
+// coloured dot; SOLD_ITEM carries a running item count after a colon (e.g. "SOLD_ITEM : 4").
+const EVENT_META: Record<string, { label: string; dot: string }> = {
+  FIRST_ITEM: { label: "First item scanned", dot: "bg-emerald-500" },
+  SUBTOTAL: { label: "Subtotal reached", dot: "bg-slate-400" },
+  SOLD_ITEM: { label: "Items registered", dot: "bg-slate-400" },
+  START_PAYMENT: { label: "Payment started", dot: "bg-blue-500" },
+  END_TRANSACTION: { label: "Transaction completed", dot: "bg-pine" },
+  START_PAUSE: { label: "Paused", dot: "bg-amber-500" },
+  END_PAUSE: { label: "Resumed", dot: "bg-amber-500" },
+};
+
+function timelineMarkup(info: Detail[]) {
+  const events = info
+    .map((row) => {
+      const raw = String(row.sz_info_data ?? "").trim();
+      const [head, tail] = raw.split(":").map((part) => part.trim());
+      const meta = EVENT_META[head] ?? { label: head.replace(/_/g, " ").toLowerCase(), dot: "bg-slate-300" };
+      const label = head === "SOLD_ITEM" && tail ? `${meta.label} · ${tail}` : meta.label;
+      return { time: String(row.dt_time_stamp ?? ""), stamp: new Date(String(row.dt_time_stamp ?? "")).getTime(), label, dot: meta.dot };
+    })
+    .filter((event) => Number.isFinite(event.stamp));
+  const heading = (sub: string) => `<h3 class="mb-2 flex items-baseline justify-between text-sm font-bold">Activity timeline<span class="text-xs font-medium text-slate-400">${sub}</span></h3>`;
+  if (!events.length) return `<section>${heading("0 events")}<p class="border-y border-slate-100 py-4 text-sm text-slate-500">No activity recorded.</p></section>`;
+  const start = events[0].stamp;
+  const span = events[events.length - 1].stamp - start;
+  const sub = `${span > 0 ? `${formatDuration(span)} · ` : ""}${events.length} event${events.length === 1 ? "" : "s"}`;
+  const rows = events.map((event, index) => {
+    const last = index === events.length - 1;
+    const offset = index === 0 ? "" : ` · +${formatDuration(event.stamp - start)}`;
+    return `<li class="relative flex gap-3"><div class="flex flex-col items-center"><span class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${event.dot} ring-2 ring-white"></span>${last ? "" : `<span class="w-px flex-1 bg-slate-200"></span>`}</div><div class="flex min-w-0 flex-1 items-baseline justify-between gap-3 ${last ? "" : "pb-3"}"><span class="truncate text-sm text-slate-700">${clean(event.label)}</span><span class="shrink-0 text-xs tabular-nums text-slate-400">${clean(formatTime(event.time))}${offset}</span></div></li>`;
+  }).join("");
+  return `<section>${heading(sub)}<ol class="border-y border-slate-100 py-3">${rows}</ol></section>`;
+}
+
+// Loyalty / customer counter changes from rdb_log_cust_account. Each row is one counter delta
+// (visits, points balance, discount) for the identified customer; the name lives in the
+// j_delivery_info JSON. Renders a customer card plus the per-counter movements for this sale.
+const COUNTER_LABELS: Record<string, string> = { visits: "Visits", balance: "Points balance", discount: "Discount" };
+
+function loyaltyMarkup(rows: Detail[]) {
+  if (!rows.length) return "";
+  const first = rows[0];
+  const customer = String(first.sz_customer_no ?? "").trim();
+  const delivery = (first.j_delivery_info && typeof first.j_delivery_info === "object" ? first.j_delivery_info : {}) as Record<string, unknown>;
+  const name = [delivery.sz_name, delivery.sz_lname].map((value) => String(value ?? "").trim()).filter(Boolean).join(" ");
+  const sign = (action: unknown) => (String(action ?? "").toUpperCase() === "MINUS" ? "−" : "+");
+  const counters = rows.map((row) => {
+    const descr = String(row.sz_entity_descr ?? "").trim();
+    return `<div class="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50/70 px-3 py-2"><span class="text-xs font-medium text-slate-500">${clean(COUNTER_LABELS[descr] ?? (descr || "Counter"))}</span><span class="text-sm font-semibold tabular-nums text-ink">${sign(row.sz_action)}${clean(row.n0_entity_value)}</span></div>`;
+  }).join("");
+  const heading = `<h3 class="mb-2 text-sm font-bold">Loyalty</h3>`;
+  const identity = `<div class="mb-3 flex items-center gap-3 rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2.5"><span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700">${icon("user")}</span><div class="min-w-0"><p class="truncate text-sm font-semibold text-ink">${name ? clean(name) : "Loyalty customer"}</p>${customer ? `<p class="truncate font-mono text-xs text-slate-500">${clean(customer)}</p>` : ""}</div></div>`;
+  return `<section>${heading}${identity}<div class="grid gap-2 sm:grid-cols-3">${counters}</div></section>`;
+}
+
+// POS alerts from rdb_log_alert scoped to this transaction. Severity is a numeric POS rank
+// (higher = more serious); map it to a coloured tier so voids/overrides stand out from routine
+// login/logoff notices. sz_alert_log carries the human-readable detail.
+const alertTier = (severity: number) =>
+  severity >= 90 ? { label: "Critical", chip: "bg-red-100 text-red-700", dot: "border-red-200 bg-red-50" }
+  : severity >= 60 ? { label: "Warning", chip: "bg-amber-100 text-amber-700", dot: "border-amber-200 bg-amber-50" }
+  : severity >= 40 ? { label: "Notice", chip: "bg-sky-100 text-sky-700", dot: "border-sky-200 bg-sky-50" }
+  : { label: "Info", chip: "bg-slate-100 text-slate-600", dot: "border-slate-200 bg-slate-50" };
+
+function alertsMarkup(rows: Detail[]) {
+  if (!rows.length) return "";
+  const heading = `<h3 class="mb-2 flex items-center justify-between text-sm font-bold"><span class="flex items-center gap-1.5 text-clay">${icon("alert")}Alerts</span><span class="text-xs font-medium text-slate-400">${rows.length} ${rows.length === 1 ? "alert" : "alerts"}</span></h3>`;
+  const items = rows.map((row) => {
+    const tier = alertTier(Number(row.n0_alert_severity ?? 0));
+    const code = String(row.sz_alert_code ?? "").trim();
+    const message = String(row.sz_alert_log ?? "").trim();
+    const source = String(row.sz_source ?? "").trim();
+    const meta = [row.dt_time_stamp ? formatTime(String(row.dt_time_stamp)) : "", source].filter(Boolean).join(" · ");
+    return `<div class="flex gap-3 rounded-md border px-3 py-2.5 ${tier.dot}"><span class="mt-0.5 h-fit shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tier.chip}">${clean(tier.label)}</span><div class="min-w-0 flex-1"><p class="truncate text-sm font-semibold text-ink">${clean(code || "Alert")}</p>${message ? `<p class="text-xs text-slate-600">${clean(message)}</p>` : ""}${meta ? `<p class="mt-0.5 text-[11px] tabular-nums text-slate-400">${clean(meta)}</p>` : ""}</div></div>`;
+  }).join("");
+  return `<section>${heading}<div class="space-y-2">${items}</div></section>`;
+}
+
 function detailSectionsMarkup() {
   const d = state.details!;
-  return `<div class="space-y-6">${section("Items", d.items, [["sz_description", "Description"], ["n0_quantity", "Qty"], ["n2_ext_price", "Line amount"]], ["n2_ext_price"], [], "n2_ext_price")}${section("Payments", d.tenders, [["sz_description", "Method"], ["n2_amount", "Amount"], ["sz_auth_number", "Authorisation"]], ["n2_amount"], [], "n2_amount")}${section("Discounts", d.discounts, [["sz_description", "Description"], ["n0_perc_off", "Rate"], ["n2_disc_amount", "Amount"]], ["n2_disc_amount"], [], "n2_disc_amount")}${section("Tax", d.vat, [["n0_tax_code", "Tax code"], ["n3_vat_percentage", "Rate"], ["n2_vat_amount", "Tax amount"]], ["n2_vat_amount"], ["n3_vat_percentage"], "n2_vat_amount")}</div>`;
+  return `<div class="space-y-6">${alertsMarkup(d.alerts ?? [])}${loyaltyMarkup(d.loyalty ?? [])}${section("Items", d.items, [["sz_description", "Description"], ["n0_quantity", "Qty"], ["n2_ext_price", "Line amount"]], ["n2_ext_price"], [], "n2_ext_price")}${section("Payments", d.tenders, [["sz_description", "Method"], ["n2_amount", "Amount"], ["sz_auth_number", "Authorisation"]], ["n2_amount"], [], "n2_amount")}${section("Discounts", d.discounts, [["sz_description", "Description"], ["n0_perc_off", "Rate"], ["n2_disc_amount", "Amount"]], ["n2_disc_amount"], [], "n2_disc_amount")}${section("Tax", d.vat, [["n0_tax_code", "Tax code"], ["n3_vat_percentage", "Rate"], ["n2_vat_amount", "Tax amount"]], ["n2_vat_amount"], ["n3_vat_percentage"], "n2_vat_amount")}${timelineMarkup(d.info ?? [])}</div>`;
 }
 
 function receiptMarkup() {
@@ -332,7 +460,7 @@ function drawerBodyMarkup() {
 function drawerMarkup() {
   if (!state.selected) return "";
   const row = state.selected;
-  return `<div class="fixed inset-0 z-20 bg-ink/25" data-close></div><aside class="drawer"><header class="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">Transaction detail</p><h2 class="mt-1 flex items-center font-display text-2xl font-semibold">#${clean(row.n0_xact_no)}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</h2><p class="mt-1 text-sm text-slate-500">Store ${clean(row.n0_unique_str_no)} · Terminal ${clean(row.n0_terminal_no)} · ${formatDate(row.dt_time_stamp_st)}</p></div><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close aria-label="Close details">${icon("close")}</button></header><div class="p-6"><div class="mb-6 grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p class="text-xs text-slate-500">Total</p><p class="mt-1 text-xl font-semibold">${formatMoney(row.n2_amount_price)}</p></div><div><p class="text-xs text-slate-500">Operator</p><p class="mt-1 text-xl font-semibold">${clean(row.n0_operator_no)}</p></div></div><div id="drawer-detail">${drawerBodyMarkup()}</div></div></aside>`;
+  return `<div class="fixed inset-0 z-20 bg-ink/25" data-close></div><aside class="drawer"><header class="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">Transaction detail</p><h2 class="mt-1 flex items-center font-display text-2xl font-semibold">#${clean(row.n0_xact_no)}${isVoided(row) ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</h2><p class="mt-1 text-sm text-slate-500">Store ${clean(row.n0_unique_str_no)} · Terminal ${clean(row.n0_terminal_no)} · ${formatDate(row.dt_time_stamp_st)}</p></div><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close aria-label="Close details">${icon("close")}</button></header><div class="p-6"><div class="mb-6 grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p class="text-xs text-slate-500">Total</p><p class="mt-1 text-xl font-semibold ${isVoided(row) ? "text-slate-400 line-through decoration-red-400" : ""}">${formatMoney(row.n2_amount_price)}</p>${isVoided(row) ? `<p class="text-[11px] font-semibold uppercase tracking-wide text-red-600">Voided · not counted</p>` : ""}</div><div><p class="text-xs text-slate-500">Operator</p><p class="mt-1 text-xl font-semibold">${clean(row.n0_operator_no)}</p></div></div><div id="drawer-detail">${drawerBodyMarkup()}</div></div></aside>`;
 }
 
 // --- render + state sync ----------------------------------------------------
@@ -420,11 +548,11 @@ async function loadTransactions() {
     const payload = await result.json();
     state.rows = payload.rows;
     state.hasMore = payload.hasMore;
-    state.summary = { total: payload.total, salesTotal: payload.salesTotal, refundCount: payload.refundCount, discountTotal: payload.discountTotal };
+    state.summary = { total: payload.total, salesTotal: payload.salesTotal, refundCount: payload.refundCount, voidCount: payload.voidCount ?? 0, discountTotal: payload.discountTotal };
   } catch (error) {
     state.rows = [];
     state.hasMore = false;
-    state.summary = { total: 0, salesTotal: 0, refundCount: 0, discountTotal: 0 };
+    state.summary = { total: 0, salesTotal: 0, refundCount: 0, voidCount: 0, discountTotal: 0 };
     state.error = error instanceof Error ? error.message : "Unable to load transactions";
   } finally {
     state.loading = false;
@@ -526,6 +654,26 @@ function bindEvents() {
   document.querySelectorAll<HTMLElement>("[data-close]").forEach((element) => element.addEventListener("click", closeDrawer));
   document.querySelectorAll<HTMLButtonElement>(".range").forEach((button) => button.addEventListener("click", () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(); from.setDate(to.getDate() - days); state.filters.dateFrom = from.toISOString().slice(0, 10); state.filters.dateTo = to.toISOString().slice(0, 10); state.range = days; state.page = 1; loadView(); }));
   document.querySelector<HTMLButtonElement>(".export-csv")?.addEventListener("click", exportCsv);
+  if (IN_TAURI) {
+    // Custom window controls, per the official Tauri v2 window-customization guide: call the window API
+    // directly. Dragging and double-click-to-maximize are handled natively via `data-tauri-drag-region`.
+    const appWin = getCurrentWindow();
+    document.querySelector<HTMLButtonElement>("#win-minimize")?.addEventListener("click", () => {
+      appWin.minimize().catch((err) => console.error("minimize failed", err));
+    });
+    document.querySelector<HTMLButtonElement>("#win-maximize")?.addEventListener("click", async () => {
+      try {
+        await appWin.toggleMaximize();
+        isMaximized = await appWin.isMaximized();
+        updateWinControls();
+      } catch (err) {
+        console.error("toggle maximize failed", err);
+      }
+    });
+    document.querySelector<HTMLButtonElement>("#win-close")?.addEventListener("click", () => {
+      appWin.close().catch((err) => console.error("close failed", err));
+    });
+  }
   bindServerEvents();
   bindDrawerBody();
 }

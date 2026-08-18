@@ -19,9 +19,19 @@ start:
 sidecar:
 	bun run sidecar
 
-# Run the desktop app in development (spawns the sidecar + Vite dev server).
+# Run the desktop app in development.
+#
+# `tauri dev` is the single parent that starts everything in parallel:
+#   * Vite dev server (:5173)       - Tauri's beforeDevCommand (bun run dev:web)
+#   * The Tauri app (cargo run)     - hosts the webview
+#   * rdblog-server sidecar (:3000) - spawned by the Rust app (src-tauri/src/lib.rs)
+#
+# On Ctrl-C the Rust app catches SIGINT/SIGTERM, kills the sidecar and exits
+# cleanly, which lets `tauri dev` tear down Vite. The trap is a safety net that
+# reaps a stray sidecar so the terminal can never hang on a leftover child.
 app-dev: sidecar
-	bunx --bun @tauri-apps/cli dev
+	@trap 'pkill -f "rdblog-server-" 2>/dev/null || true' INT TERM EXIT; \
+	 bunx --bun @tauri-apps/cli dev
 
 # Build the distributable desktop app (bundle in src-tauri/target/release/bundle/).
 app: sidecar

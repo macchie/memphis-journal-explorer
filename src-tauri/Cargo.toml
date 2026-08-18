@@ -24,3 +24,6 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
+# Cross-platform SIGINT/SIGTERM handling so the bundled sidecar is always torn
+# down on Ctrl-C (dev) as well as on a normal window-close quit.
+ctrlc = { version = "3", features = ["termination"] }

@@ -62,7 +62,7 @@ function transactionWhere(filters: Filters) {
 }
 
 const listSelect = (where: string, sort: string, direction: string, limit: number, offset = 0) =>
-  `SELECT h.dt_time_stamp_st, h.n0_unique_str_no, h.n0_terminal_no, h.n0_xact_no, h.n0_operator_no, h.n2_amount_price, h.n0_tot_sold_item, h.bl_refund, h.bl_loyalty, ${DISCOUNT_TOTAL} AS discount_total FROM public.rdb_log h WHERE ${where} ORDER BY ${sort} ${direction}, h.dt_time_stamp_st DESC LIMIT ${limit} OFFSET ${offset}`;
+  `SELECT h.dt_time_stamp_st, h.n0_unique_str_no, h.n0_terminal_no, h.n0_xact_no, h.n0_operator_no, h.n2_amount_price, h.n0_tot_sold_item, h.bl_refund, h.bl_loyalty, h.bl_voided, ${DISCOUNT_TOTAL} AS discount_total FROM public.rdb_log h WHERE ${where} ORDER BY ${sort} ${direction}, h.dt_time_stamp_st DESC LIMIT ${limit} OFFSET ${offset}`;
 
 // --- endpoint handlers -----------------------------------------------------
 
@@ -73,8 +73,10 @@ async function transactionsList(filters: Filters) {
   const page = Math.max(1, Number.parseInt(filters.page ?? "1", 10) || 1);
   const [rows, summary, discount] = await Promise.all([
     remoteQuery(listSelect(where, sort, direction, 26, (page - 1) * 25)),
-    remoteQuery(`SELECT count(*) total, COALESCE(SUM(h.n2_amount_price) FILTER (WHERE h.bl_refund <> '1'), 0) sales, count(*) FILTER (WHERE h.bl_refund = '1') refunds FROM public.rdb_log h WHERE ${where}`),
-    remoteQuery(`SELECT COALESCE(SUM(COALESCE(d.n2_allowance, 0) + COALESCE(d.n2_perc_off_amount, 0)), 0) disc FROM public.rdb_log_discount d JOIN public.rdb_log h ON h.dt_time_stamp_st = d.dt_time_stamp AND h.n0_unique_str_no = d.n0_unique_str_no AND h.n0_terminal_no = d.n0_terminal_no AND h.n0_xact_no = d.n0_xact_no WHERE ${where} AND COALESCE(d.bl_voided, 0) <> 1`),
+    // Voided transactions stay in the list (and count) but must not contribute to the money totals,
+    // so the sales/refund aggregates filter them out and we surface the void count separately.
+    remoteQuery(`SELECT count(*) total, COALESCE(SUM(h.n2_amount_price) FILTER (WHERE h.bl_refund <> '1' AND COALESCE(h.bl_voided, 0) <> 1), 0) sales, count(*) FILTER (WHERE h.bl_refund = '1' AND COALESCE(h.bl_voided, 0) <> 1) refunds, count(*) FILTER (WHERE COALESCE(h.bl_voided, 0) = 1) voids FROM public.rdb_log h WHERE ${where}`),
+    remoteQuery(`SELECT COALESCE(SUM(COALESCE(d.n2_allowance, 0) + COALESCE(d.n2_perc_off_amount, 0)), 0) disc FROM public.rdb_log_discount d JOIN public.rdb_log h ON h.dt_time_stamp_st = d.dt_time_stamp AND h.n0_unique_str_no = d.n0_unique_str_no AND h.n0_terminal_no = d.n0_terminal_no AND h.n0_xact_no = d.n0_xact_no WHERE ${where} AND COALESCE(d.bl_voided, 0) <> 1 AND COALESCE(h.bl_voided, 0) <> 1`),
   ]);
   return response({
     rows: rows.slice(0, 25),
@@ -83,6 +85,7 @@ async function transactionsList(filters: Filters) {
     total: num(summary[0]?.total),
     salesTotal: num(summary[0]?.sales),
     refundCount: num(summary[0]?.refunds),
+    voidCount: num(summary[0]?.voids),
     discountTotal: num(discount[0]?.disc),
   });
 }
@@ -92,7 +95,7 @@ async function transactionsCsv(filters: Filters) {
   const sort = SORT_COLUMNS[filters.sort ?? "date"] ?? SORT_COLUMNS.date;
   const direction = filters.direction === "asc" ? "ASC" : "DESC";
   const rows = await remoteQuery(listSelect(where, sort, direction, 5000));
-  const header = ["Date/time", "Transaction", "Store", "Terminal", "Operator", "Amount", "Discount", "Items", "Refund", "Loyalty"];
+  const header = ["Date/time", "Transaction", "Store", "Terminal", "Operator", "Amount", "Discount", "Items", "Refund", "Loyalty", "Voided"];
   const cell = (value: unknown) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; };
   const body = rows.map((r) => [
     String(r.dt_time_stamp_st ?? "").slice(0, 19).replace("T", " "),
@@ -102,6 +105,7 @@ async function transactionsCsv(filters: Filters) {
     r.n0_tot_sold_item,
     r.bl_refund === "1" ? "yes" : "no",
     r.bl_loyalty ? "yes" : "no",
+    num(r.bl_voided) === 1 ? "yes" : "no",
   ].map(cell).join(","));
   const csv = [header.join(","), ...body].join("\n");
   return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`, "Cache-Control": "no-store", ...CORS } });
@@ -109,12 +113,14 @@ async function transactionsCsv(filters: Filters) {
 
 async function insights(filters: Filters) {
   const where = transactionWhere(filters);
+  // Voided transactions are excluded from revenue/volume so insights reflect real sales only.
+  const revWhere = `${where} AND COALESCE(h.bl_voided, 0) <> 1`;
   const [byDayRaw, byHourRaw, byStore, byOperator, topProducts] = await Promise.all([
-    remoteQuery(`SELECT EXTRACT(YEAR FROM h.dt_time_stamp_st)::int y, EXTRACT(MONTH FROM h.dt_time_stamp_st)::int mo, EXTRACT(DAY FROM h.dt_time_stamp_st)::int dy, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${where} GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC LIMIT 30`),
-    remoteQuery(`SELECT EXTRACT(HOUR FROM h.dt_time_stamp_st)::int hr, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${where} GROUP BY 1 ORDER BY 1`),
-    remoteQuery(`SELECT h.n0_unique_str_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${where} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
-    remoteQuery(`SELECT h.n0_operator_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${where} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
-    remoteQuery(`SELECT TRIM(i.sz_description) dim, SUM(i.n0_quantity) qty, SUM(i.n2_ext_price) revenue FROM public.rdb_log_item i JOIN public.rdb_log h ON h.dt_time_stamp_st = i.dt_time_stamp AND h.n0_unique_str_no = i.n0_unique_str_no AND h.n0_terminal_no = i.n0_terminal_no AND h.n0_xact_no = i.n0_xact_no WHERE ${where} AND COALESCE(i.bl_voided, 0) = 0 GROUP BY 1 ORDER BY revenue DESC LIMIT 10`),
+    remoteQuery(`SELECT EXTRACT(YEAR FROM h.dt_time_stamp_st)::int y, EXTRACT(MONTH FROM h.dt_time_stamp_st)::int mo, EXTRACT(DAY FROM h.dt_time_stamp_st)::int dy, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC LIMIT 30`),
+    remoteQuery(`SELECT EXTRACT(HOUR FROM h.dt_time_stamp_st)::int hr, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY 1`),
+    remoteQuery(`SELECT h.n0_unique_str_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
+    remoteQuery(`SELECT h.n0_operator_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
+    remoteQuery(`SELECT TRIM(i.sz_description) dim, SUM(i.n0_quantity) qty, SUM(i.n2_ext_price) revenue FROM public.rdb_log_item i JOIN public.rdb_log h ON h.dt_time_stamp_st = i.dt_time_stamp AND h.n0_unique_str_no = i.n0_unique_str_no AND h.n0_terminal_no = i.n0_terminal_no AND h.n0_xact_no = i.n0_xact_no WHERE ${revWhere} AND COALESCE(i.bl_voided, 0) = 0 GROUP BY 1 ORDER BY revenue DESC LIMIT 10`),
   ]);
   const pad = (n: number) => String(n).padStart(2, "0");
   const byDay = byDayRaw.map((r) => ({ label: `${r.y}-${pad(num(r.mo))}-${pad(num(r.dy))}`, txns: num(r.txns), revenue: num(r.revenue) })).reverse();
@@ -163,13 +169,22 @@ async function transactionDetail(rawKey: string) {
   // Detail tables carry no bl_suspended flag, so drop rows recorded at a suspended header's timestamp.
   const notSuspended = `dt_time_stamp NOT IN (SELECT dt_time_stamp_st FROM public.rdb_log WHERE n0_trans_type = 0 AND bl_suspended <> 0 AND ${keyMatch} AND ${dayRange("dt_time_stamp_st")})`;
   const where = `${dayRange("dt_time_stamp")} AND ${keyMatch} AND ${notSuspended}`;
-  const [items, tenders, discounts, vat] = await Promise.all([
+  const [items, tenders, discounts, vat, info, loyalty, alerts] = await Promise.all([
     remoteQuery(`SELECT n0_sequence_no, sz_description, sz_item_ref_no, n0_quantity, n2_amount_price, n2_ext_price, bl_return FROM public.rdb_log_item WHERE ${where} ORDER BY n0_sequence_no`),
     remoteQuery(`SELECT n0_sequence_no, sz_description, sz_tender_type, n2_amount, sz_auth_number FROM public.rdb_log_tender WHERE ${where} ORDER BY n0_sequence_no`),
     remoteQuery(`SELECT n0_sequence_no, sz_description, n0_perc_off, (COALESCE(n2_allowance, 0) + COALESCE(n2_perc_off_amount, 0)) AS n2_disc_amount FROM public.rdb_log_discount WHERE ${where} ORDER BY n0_sequence_no`),
     remoteQuery(`SELECT n0_tax_code, n2_sold_amount, n2_vat_amount, n3_vat_percentage FROM public.rdb_log_vat WHERE ${where} ORDER BY n0_sequence_no`),
+    // Per-transaction event trail (each row a timestamped POS event: FIRST_ITEM, SUBTOTAL,
+    // SOLD_ITEM : n, START_PAYMENT, END_TRANSACTION, START/END_PAUSE) used to build the activity timeline.
+    remoteQuery(`SELECT n0_sequence_no, dt_time_stamp, sz_info_data FROM public.rdb_log_info WHERE ${where} ORDER BY dt_time_stamp, n0_sequence_no`),
+    // Loyalty / customer counter changes (visits, points balance, discount) recorded for the identified
+    // customer, with their name carried in the j_delivery_info JSON blob.
+    remoteQuery(`SELECT n0_sequence_no, sz_customer_no, sz_action, sz_entity, sz_entity_descr, n0_entity_value, j_delivery_info, n0_campaign_id, n0_initiative_id FROM public.rdb_log_cust_account WHERE ${where} ORDER BY n0_sequence_no`),
+    // POS alerts emitted during the transaction (VOID, PAUSE, LOGIN/LOGOFF, PRICEOVERRIDE, PLD, ...),
+    // each with a numeric severity and a human-readable message in sz_alert_log.
+    remoteQuery(`SELECT dt_time_stamp, n0_alert_severity, sz_alert_code, sz_alert_log, sz_source FROM public.rdb_log_alert WHERE ${where} ORDER BY dt_time_stamp`),
   ]);
-  return response({ items, tenders, discounts, vat });
+  return response({ items, tenders, discounts, vat, info, loyalty, alerts });
 }
 
 Bun.serve({

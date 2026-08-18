@@ -294,3 +294,76 @@ CREATE TABLE IF NOT EXISTS public.rdb_log_vat
 
 TABLESPACE pg_default;
 ```
+
+### public.rdb_log_info
+
+This table contains information logs from the transaction.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.rdb_log_info
+(
+    dt_time_stamp timestamp without time zone NOT NULL,
+    n0_operator_no integer NOT NULL,
+    n0_terminal_no integer NOT NULL,
+    n0_xact_no integer NOT NULL,
+    n0_sequence_no integer NOT NULL,
+    n0_unique_str_no integer NOT NULL,
+    dt_period_no timestamp without time zone,
+    n0_item_id integer,
+    n0_info_data_type integer,
+    sz_info_data character varying COLLATE pg_catalog."default",
+    CONSTRAINT rdb_log_info_pkey PRIMARY KEY (dt_time_stamp, n0_operator_no, n0_sequence_no, n0_terminal_no, n0_unique_str_no, n0_xact_no)
+)
+```
+
+### public.rdb_log_cust_account
+
+This table contains informations about changes on customer / loyalty counters.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.rdb_log_cust_account
+(
+    dt_time_stamp timestamp without time zone NOT NULL,
+    n0_operator_no integer NOT NULL,
+    n0_terminal_no integer NOT NULL,
+    n0_xact_no integer NOT NULL,
+    n0_sequence_no integer NOT NULL,
+    n0_unique_str_no integer NOT NULL,
+    dt_period_no timestamp without time zone,
+    sz_customer_no character(20) COLLATE pg_catalog."default",
+    sz_action character varying COLLATE pg_catalog."default",
+    sz_entity character varying COLLATE pg_catalog."default",
+    sz_entity_descr character varying COLLATE pg_catalog."default",
+    n0_entity_value integer,
+    sz_account_no character(20) COLLATE pg_catalog."default",
+    n0_account_type integer,
+    sz_reason character(20) COLLATE pg_catalog."default",
+    j_delivery_info json,
+    n0_campaign_id integer,
+    n0_initiative_id integer,
+    sz_cust_to_invoice character varying COLLATE pg_catalog."default",
+    CONSTRAINT rdb_log_cust_account_pkey PRIMARY KEY (dt_time_stamp, n0_operator_no, n0_terminal_no, n0_xact_no, n0_unique_str_no, n0_sequence_no)
+)
+```
+
+### public.rdb_log_alert
+
+This table contains alerts emitted during the transactions.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.rdb_log_alert
+(
+    dt_time_stamp timestamp without time zone,
+    n0_operator_no integer,
+    n0_terminal_no integer,
+    n0_xact_no integer,
+    n0_sequence_no integer,
+    n0_unique_str_no integer,
+    dt_period_no timestamp without time zone,
+    n0_lkup_data_set integer,
+    n0_alert_severity integer,
+    sz_alert_code character varying COLLATE pg_catalog."default",
+    sz_alert_log character varying(256) COLLATE pg_catalog."default",
+    sz_source character varying COLLATE pg_catalog."default"
+)
+```
