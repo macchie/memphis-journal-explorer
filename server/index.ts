@@ -111,25 +111,6 @@ async function transactionsCsv(filters: Filters) {
   return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`, "Cache-Control": "no-store", ...CORS } });
 }
 
-async function insights(filters: Filters) {
-  const where = transactionWhere(filters);
-  // Voided transactions are excluded from revenue/volume so insights reflect real sales only.
-  const revWhere = `${where} AND COALESCE(h.bl_voided, 0) <> 1`;
-  const [byDayRaw, byHourRaw, byStore, byOperator, topProducts] = await Promise.all([
-    remoteQuery(`SELECT EXTRACT(YEAR FROM h.dt_time_stamp_st)::int y, EXTRACT(MONTH FROM h.dt_time_stamp_st)::int mo, EXTRACT(DAY FROM h.dt_time_stamp_st)::int dy, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC LIMIT 30`),
-    remoteQuery(`SELECT EXTRACT(HOUR FROM h.dt_time_stamp_st)::int hr, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY 1`),
-    remoteQuery(`SELECT h.n0_unique_str_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
-    remoteQuery(`SELECT h.n0_operator_no dim, count(*) txns, SUM(h.n2_amount_price) revenue FROM public.rdb_log h WHERE ${revWhere} GROUP BY 1 ORDER BY revenue DESC LIMIT 12`),
-    remoteQuery(`SELECT TRIM(i.sz_description) dim, SUM(i.n0_quantity) qty, SUM(i.n2_ext_price) revenue FROM public.rdb_log_item i JOIN public.rdb_log h ON h.dt_time_stamp_st = i.dt_time_stamp AND h.n0_unique_str_no = i.n0_unique_str_no AND h.n0_terminal_no = i.n0_terminal_no AND h.n0_xact_no = i.n0_xact_no WHERE ${revWhere} AND COALESCE(i.bl_voided, 0) = 0 GROUP BY 1 ORDER BY revenue DESC LIMIT 10`),
-  ]);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const byDay = byDayRaw.map((r) => ({ label: `${r.y}-${pad(num(r.mo))}-${pad(num(r.dy))}`, txns: num(r.txns), revenue: num(r.revenue) })).reverse();
-  const hourMap = new Map(byHourRaw.map((r) => [num(r.hr), { txns: num(r.txns), revenue: num(r.revenue) }]));
-  const byHour = Array.from({ length: 24 }, (_, hr) => ({ label: `${pad(hr)}:00`, txns: hourMap.get(hr)?.txns ?? 0, revenue: hourMap.get(hr)?.revenue ?? 0 }));
-  const shape = (rows: Row[]) => rows.map((r) => ({ label: String(r.dim), txns: num(r.txns), qty: num(r.qty), revenue: num(r.revenue) }));
-  return response({ byDay, byHour, byStore: shape(byStore), byOperator: shape(byOperator), topProducts: shape(topProducts) });
-}
-
 async function exceptions(filters: Filters) {
   const where = transactionWhere(filters);
   const flagInner = `SELECT h.dt_time_stamp_st, h.n0_unique_str_no store, h.n0_terminal_no term, h.n0_xact_no xact, h.n0_operator_no oper, h.n2_amount_price amount, h.bl_refund, h.bl_voided, h.bl_void_prev, COALESCE(h.n0_tot_itm_voided, 0) item_voids, ${DISCOUNT_TOTAL} AS disc FROM public.rdb_log h WHERE ${where}`;
@@ -216,7 +197,6 @@ Bun.serve({
       }
       if (url.pathname === "/api/transactions") return await transactionsList(filters);
       if (url.pathname === "/api/transactions.csv") return await transactionsCsv(filters);
-      if (url.pathname === "/api/insights") return await insights(filters);
       if (url.pathname === "/api/exceptions") return await exceptions(filters);
       const match = url.pathname.match(/^\/api\/transactions\/(.+)$/);
       if (match) return await transactionDetail(match[1]);

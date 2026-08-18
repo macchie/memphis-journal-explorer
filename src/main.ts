@@ -19,13 +19,10 @@ type Detail = Record<string, unknown>;
 type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[]; info: Detail[]; loyalty: Detail[]; alerts: Detail[] };
 type Facets = { stores: string[]; terminals: string[]; operators: string[] };
 type Summary = { total: number; salesTotal: number; refundCount: number; voidCount: number; discountTotal: number };
-type Series = { label: string; txns: number; revenue: number };
-type Bar = Series & { qty: number };
-type Insights = { byDay: Series[]; byHour: Series[]; byStore: Bar[]; byOperator: Bar[]; topProducts: Bar[] };
 type Flagged = Transaction & { reasons: string[]; score: number };
 type Operator = { operator: string; txns: number; voids: number; refunds: number; voidRate: number; risk: number };
 type Exceptions = { flagged: Flagged[]; operators: Operator[] };
-type View = "transactions" | "insights" | "exceptions";
+type View = "transactions" | "exceptions";
 type Server = { id: string; name: string; address: string };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -38,7 +35,6 @@ const state = {
   range: null as number | null,
   facets: null as Facets | null,
   filters: {} as Record<string, string>,
-  insights: null as Insights | null,
   exceptions: null as Exceptions | null,
   selected: null as Transaction | null,
   details: null as Details | null,
@@ -204,7 +200,7 @@ function serverSwitcherMarkup() {
 
 function toolbarMarkup() {
   const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition ${state.view === view ? "bg-slate-800 text-white shadow-sm border-b-2 border-blue-500" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"}" data-view="${view}">${icon(ic)}<span>${label}</span></button>`;
-  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("insights", "Insights", "chart")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
+  const nav = selectedServer() ? `<nav class="flex gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
   // `data-tauri-drag-region` is applied to the non-interactive layout containers so the titlebar can be
   // dragged (and double-clicked to maximize) exactly like a native title bar; interactive children
   // (buttons, nav, select) deliberately omit it so their own clicks are not swallowed by the drag.
@@ -231,7 +227,6 @@ function manageModalMarkup() {
 function pageHeaderMarkup() {
   const meta = {
     transactions: { k: "RDB log", t: "Sales transactions", d: "Inspect sales headers, line items, payments, discounts, and tax detail." },
-    insights: { k: "Analytics", t: "Insights", d: "Sales trends across time, stores, operators, and products." },
     exceptions: { k: "Loss prevention", t: "Exceptions", d: "Voids, refunds and heavy discounts — ranked by risk." },
   }[state.view];
   const ranges = `<div class="flex rounded-md border border-blue-200 bg-white p-1 text-sm shadow-sm">${[[0, "Today"], [6, "7 days"], [29, "30 days"]].map(([days, label]) => `<button class="range button-range rounded px-3 py-1.5 ${state.range === days ? "bg-pine text-white shadow-sm hover:bg-blue-600 hover:text-white" : ""}" data-days="${days}">${label}</button>`).join("")}</div>`;
@@ -281,42 +276,10 @@ function tableMarkup() {
   return `${summaryMarkup()}<section class="overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="border-b border-blue-100 bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr>${sortable.map(([key, title]) => `<th class="whitespace-nowrap px-5 py-3.5"><button class="sort inline-flex items-center gap-1 transition hover:text-pine ${state.sort === key ? "text-pine" : ""}" data-sort="${key}">${title}<span class="text-[0.7rem]">${state.sort === key ? (state.direction === "asc" ? "↑" : "↓") : ""}</span></button></th>${key === "date" ? `<th class="px-5 py-3.5">Txn #</th>` : ""}`).join("")}<th class="px-5 py-3.5">Items</th><th class="px-5 py-3.5"></th></tr></thead><tbody>${body}</tbody></table></div><footer class="flex items-center justify-between border-t border-blue-100 bg-[#fbfcff] px-5 py-3"><p class="text-sm text-slate-500">Showing ${count}</p><div class="flex gap-2"><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="prev" ${state.page === 1 ? "disabled" : ""}>Previous</button><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="next" ${!state.hasMore ? "disabled" : ""}>Next</button></div></footer></section>`;
 }
 
-// --- insights view ----------------------------------------------------------
+// --- exceptions view --------------------------------------------------------
 
 const statusCard = (body: string) => `<section class="rounded-lg border border-blue-100 bg-white p-12 text-center text-sm shadow-panel">${body}</section>`;
-const card = (title: string, body: string, sub = "") => `<section class="rounded-lg border border-blue-100 bg-white p-5 shadow-panel"><h3 class="mb-4 flex items-baseline justify-between text-sm font-bold text-ink">${title}${sub ? `<span class="text-xs font-medium text-slate-400">${sub}</span>` : ""}</h3>${body}</section>`;
 const tile = (label: string, value: string, sub = "") => `<div class="rounded-lg border border-[#cddcff] bg-mist px-5 py-4 shadow-sm"><p class="text-xs font-medium text-slate-600">${label}</p><p class="mt-1 text-2xl font-semibold tabular-nums text-ink">${value}</p>${sub ? `<p class="mt-0.5 truncate text-xs text-slate-500">${sub}</p>` : ""}</div>`;
-
-function vBars(rows: { label: string; value: number; hint: string }[], labelEvery = 1) {
-  if (!rows.length) return `<p class="py-10 text-center text-sm text-slate-400">No data.</p>`;
-  const max = Math.max(1, ...rows.map((r) => r.value));
-  return `<div><div class="flex h-40 items-end gap-[3px]">${rows.map((r) => `<div class="flex-1 rounded-t bg-pine/80 transition-colors hover:bg-pine" style="height:${Math.max(2, Math.round((r.value / max) * 100))}%" title="${clean(r.hint)}"></div>`).join("")}</div><div class="mt-1.5 flex gap-[3px] text-[9px] text-slate-400">${rows.map((r, i) => `<div class="flex-1 truncate text-center">${i % labelEvery === 0 ? clean(r.label) : ""}</div>`).join("")}</div></div>`;
-}
-
-function barRows(rows: { label: string; value: number; caption: string }[]) {
-  if (!rows.length) return `<p class="py-10 text-center text-sm text-slate-400">No data.</p>`;
-  const max = Math.max(1, ...rows.map((r) => r.value));
-  return `<div class="space-y-2">${rows.map((r) => `<div class="flex items-center gap-3"><span class="w-24 shrink-0 truncate text-xs font-medium text-slate-600" title="${clean(r.label)}">${clean(r.label)}</span><div class="h-5 flex-1 overflow-hidden rounded bg-slate-100"><div class="h-5 rounded bg-pine" style="width:${Math.max(3, Math.round((r.value / max) * 100))}%"></div></div><span class="w-24 shrink-0 text-right text-xs font-semibold tabular-nums text-ink">${clean(r.caption)}</span></div>`).join("")}</div>`;
-}
-
-function insightsMarkup() {
-  if (state.loading) return statusCard(`<p class="text-slate-500">Crunching the numbers…</p>`);
-  if (state.error || !state.insights) return statusCard(`<div class="flex flex-col items-center gap-2 text-clay"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#alert" /></svg><p class="font-semibold">${clean(state.error || "Unable to load insights.")}</p></div>`);
-  const ins = state.insights;
-  const totalTxns = ins.byStore.reduce((s, r) => s + r.txns, 0);
-  const totalRev = ins.byStore.reduce((s, r) => s + r.revenue, 0);
-  const busiest = ins.byHour.reduce((a, b) => (b.revenue > a.revenue ? b : a), ins.byHour[0] ?? { label: "—", revenue: 0, txns: 0 });
-  const top = ins.topProducts[0];
-  const tiles = `<div class="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">${tile("Transactions", totalTxns.toLocaleString())}${tile("Net revenue", formatMoney(totalRev))}${tile("Busiest hour", busiest.label, `${formatMoney(busiest.revenue)} · ${busiest.txns} txns`)}${tile("Top product", top ? formatMoney(top.revenue) : "—", top ? clean(top.label) : "")}</div>`;
-  const byDay = vBars(ins.byDay.map((r) => ({ label: r.label.slice(5), value: r.revenue, hint: `${r.label} · ${formatMoney(r.revenue)} · ${r.txns} txns` })), 5);
-  const byHour = vBars(ins.byHour.map((r) => ({ label: r.label.slice(0, 2), value: r.revenue, hint: `${r.label} · ${formatMoney(r.revenue)} · ${r.txns} txns` })), 3);
-  const products = barRows(ins.topProducts.map((r) => ({ label: r.label, value: r.revenue, caption: formatMoney(r.revenue) })));
-  const stores = barRows(ins.byStore.map((r) => ({ label: `Store ${r.label}`, value: r.revenue, caption: formatMoney(r.revenue) })));
-  const operators = barRows(ins.byOperator.map((r) => ({ label: `Op ${r.label}`, value: r.revenue, caption: formatMoney(r.revenue) })));
-  return `${tiles}<div class="grid gap-5 xl:grid-cols-2">${card("Revenue by day", byDay, "last 30 days")}${card("Revenue by hour", byHour)}${card("Top products", products)}${card("By store", stores)}${card("By operator", operators, "top 12")}</div>`;
-}
-
-// --- exceptions view --------------------------------------------------------
 
 const reasonChip = (reason: string) => {
   const tone = /void/i.test(reason) ? "bg-red-100 text-red-700" : /refund/i.test(reason) ? "bg-amber-100 text-amber-700" : /training/i.test(reason) ? "bg-slate-200 text-slate-600" : /discount/i.test(reason) ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700";
@@ -472,7 +435,7 @@ function render() {
     bindEvents();
     return;
   }
-  const content = state.view === "insights" ? insightsMarkup() : state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
+  const content = state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
   app.innerHTML = `${toolbarMarkup()}<main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${filterMarkup()}${content}</main>${drawerMarkup()}${manageModalMarkup()}`;
   syncUrl();
   bindEvents();
@@ -501,8 +464,7 @@ function readUrl() {
     const value = query.get(key);
     if (value) state.filters[key] = value;
   }
-  const view = query.get("view");
-  if (view === "insights" || view === "exceptions") state.view = view;
+  if (query.get("view") === "exceptions") state.view = "exceptions";
   if (query.get("sort")) state.sort = query.get("sort")!;
   if (query.get("dir") === "asc") state.direction = "asc";
   state.page = Math.max(1, Number.parseInt(query.get("page") ?? "1", 10) || 1);
@@ -529,7 +491,6 @@ async function loadFacets() {
 }
 
 function loadView() {
-  if (state.view === "insights") return loadInsights();
   if (state.view === "exceptions") return loadExceptions();
   return loadTransactions();
 }
@@ -554,23 +515,6 @@ async function loadTransactions() {
     state.hasMore = false;
     state.summary = { total: 0, salesTotal: 0, refundCount: 0, voidCount: 0, discountTotal: 0 };
     state.error = error instanceof Error ? error.message : "Unable to load transactions";
-  } finally {
-    state.loading = false;
-    render();
-  }
-}
-
-async function loadInsights() {
-  state.loading = true;
-  state.error = "";
-  render();
-  try {
-    const result = await apiFetch(`/api/insights?${currentFilters()}`);
-    if (!result.ok) throw new Error("Unable to load insights");
-    state.insights = await result.json();
-  } catch (error) {
-    state.insights = null;
-    state.error = error instanceof Error ? error.message : "Unable to load insights";
   } finally {
     state.loading = false;
     render();
