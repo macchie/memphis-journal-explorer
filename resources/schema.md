@@ -367,3 +367,21 @@ CREATE TABLE IF NOT EXISTS public.rdb_log_alert
     sz_source character varying COLLATE pg_catalog."default"
 )
 ```
+
+### public.rdb_log_receipt
+
+This table contains the receipt rows produced by the POS during the transactions.
+
+```sql
+CREATE TABLE IF NOT EXISTS public.rdb_log_receipt
+(
+    dt_time_stamp timestamp without time zone NOT NULL,
+    n0_operator_no integer NOT NULL,
+    n0_terminal_no integer NOT NULL,
+    n0_xact_no integer NOT NULL,
+    n0_unique_str_no integer NOT NULL,
+    dt_period_no timestamp without time zone,
+    j_receipt_line json,
+    CONSTRAINT rdb_log_receipt_pkey PRIMARY KEY (dt_time_stamp, n0_operator_no, n0_terminal_no, n0_unique_str_no, n0_xact_no)
+)
+```

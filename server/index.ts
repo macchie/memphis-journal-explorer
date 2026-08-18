@@ -154,7 +154,7 @@ async function transactionDetail(rawKey: string) {
   // Detail tables carry no bl_suspended flag, so drop rows recorded at a suspended header's timestamp.
   const notSuspended = `dt_time_stamp NOT IN (SELECT dt_time_stamp_st FROM public.rdb_log WHERE n0_trans_type = 0 AND bl_suspended <> 0 AND ${keyMatch} AND ${dayRange("dt_time_stamp_st")})`;
   const where = `${dayRange("dt_time_stamp")} AND ${keyMatch} AND ${notSuspended}`;
-  const [items, tenders, discounts, vat, info, loyalty, alerts] = await Promise.all([
+  const [items, tenders, discounts, vat, info, loyalty, alerts, receiptRows] = await Promise.all([
     remoteQuery(`SELECT n0_sequence_no, sz_description, sz_item_ref_no, n0_quantity, n2_amount_price, n2_ext_price, bl_return FROM public.rdb_log_item WHERE ${where} ORDER BY n0_sequence_no`),
     remoteQuery(`SELECT n0_sequence_no, sz_description, sz_tender_type, n2_amount, sz_auth_number FROM public.rdb_log_tender WHERE ${where} ORDER BY n0_sequence_no`),
     remoteQuery(`SELECT n0_sequence_no, sz_description, n0_perc_off, (COALESCE(n2_allowance, 0) + COALESCE(n2_perc_off_amount, 0)) AS n2_disc_amount FROM public.rdb_log_discount WHERE ${where} ORDER BY n0_sequence_no`),
@@ -168,8 +168,13 @@ async function transactionDetail(rawKey: string) {
     // POS alerts emitted during the transaction (VOID, PAUSE, LOGIN/LOGOFF, PRICEOVERRIDE, PLD, ...),
     // each with a numeric severity and a human-readable message in sz_alert_log.
     remoteQuery(`SELECT dt_time_stamp, n0_alert_severity, sz_alert_code, sz_alert_log, sz_source FROM public.rdb_log_alert WHERE ${where} ORDER BY dt_time_stamp`),
+    // Original POS-printed receipt: one row per transaction whose j_receipt_line JSON holds the
+    // pre-formatted text lines ({ id, val, type }) exactly as printed.
+    remoteQuery(`SELECT j_receipt_line FROM public.rdb_log_receipt WHERE ${where} ORDER BY dt_time_stamp`),
   ]);
-  return response({ items, tenders, discounts, vat, info, loyalty, alerts });
+  // Flatten the printed lines from any matching receipt row(s) into a single ordered list.
+  const receipt = receiptRows.flatMap((r) => (Array.isArray(r.j_receipt_line) ? (r.j_receipt_line as unknown[]) : []));
+  return response({ items, tenders, discounts, vat, info, loyalty, alerts, receipt });
 }
 
 Bun.serve({

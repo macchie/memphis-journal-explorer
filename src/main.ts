@@ -16,7 +16,7 @@ type Transaction = {
 };
 
 type Detail = Record<string, unknown>;
-type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[]; info: Detail[]; loyalty: Detail[]; alerts: Detail[] };
+type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[]; info: Detail[]; loyalty: Detail[]; alerts: Detail[]; receipt: Detail[] };
 type Facets = { stores: string[]; terminals: string[]; operators: string[] };
 type Summary = { total: number; salesTotal: number; refundCount: number; voidCount: number; discountTotal: number };
 type Flagged = Transaction & { reasons: string[]; score: number };
@@ -409,17 +409,21 @@ function detailSectionsMarkup() {
   return `<div class="space-y-6">${alertsMarkup(d.alerts ?? [])}${loyaltyMarkup(d.loyalty ?? [])}${section("Items", d.items, [["sz_description", "Description"], ["n0_quantity", "Qty"], ["n2_ext_price", "Line amount"]], ["n2_ext_price"], [], "n2_ext_price", itemSearchButton)}${section("Payments", d.tenders, [["sz_description", "Method"], ["n2_amount", "Amount"], ["sz_auth_number", "Authorisation"]], ["n2_amount"], [], "n2_amount")}${section("Discounts", d.discounts, [["sz_description", "Description"], ["n0_perc_off", "Rate"], ["n2_disc_amount", "Amount"]], ["n2_disc_amount"], [], "n2_disc_amount")}${section("Tax", d.vat, [["n0_tax_code", "Tax code"], ["n3_vat_percentage", "Rate"], ["n2_vat_amount", "Tax amount"]], ["n2_vat_amount"], ["n3_vat_percentage"], "n2_vat_amount")}${timelineMarkup(d.info ?? [])}</div>`;
 }
 
+// The original POS-printed receipt from rdb_log_receipt: each line's `val` is already column-aligned,
+// so render them verbatim in a monospace <pre>. Collapse the doubled apostrophes left by the source
+// escaping (e.g. d''article).
 function receiptMarkup() {
-  const d = state.details!, row = state.selected!;
-  const line = (left: string, right: string, bold = false) => `<div class="flex justify-between gap-4 ${bold ? "font-bold" : ""}"><span class="truncate">${left}</span><span class="shrink-0 tabular-nums">${right}</span></div>`;
-  const rule = `<div class="my-2 border-t border-dashed border-slate-300"></div>`;
-  const itemsTotal = d.items.reduce((s, i) => s + Number(i.n2_ext_price ?? 0), 0);
-  const discTotal = d.discounts.reduce((s, i) => s + Number(i.n2_disc_amount ?? 0), 0);
-  const vatTotal = d.vat.reduce((s, i) => s + Number(i.n2_vat_amount ?? 0), 0);
-  const items = d.items.map((i) => line(`${clean(i.n0_quantity)} × ${clean(i.sz_description)}`, formatMoney(i.n2_ext_price))).join("");
-  const discounts = d.discounts.map((i) => line(clean(i.sz_description), `-${formatMoney(i.n2_disc_amount)}`)).join("");
-  const tenders = d.tenders.map((t) => line(clean(t.sz_description), formatMoney(t.n2_amount))).join("");
-  return `<div id="receipt" class="mx-auto max-w-sm rounded-lg border border-slate-200 bg-white p-6 font-mono text-xs leading-relaxed text-slate-800 shadow-sm"><div class="text-center"><p class="text-sm font-bold tracking-widest">SALES RECEIPT</p><p class="mt-1 text-slate-500">Store ${clean(row.n0_unique_str_no)} · Terminal ${clean(row.n0_terminal_no)}</p><p class="text-slate-500">${formatDate(row.dt_time_stamp_st)}</p><p class="text-slate-500">Txn #${clean(row.n0_xact_no)} · Operator ${clean(row.n0_operator_no)}</p></div>${rule}${items || `<p class="text-slate-400">No items.</p>`}${rule}${line("Subtotal", formatMoney(itemsTotal))}${discTotal ? line("Discounts", `-${formatMoney(discTotal)}`) : ""}${vatTotal ? line("Tax", formatMoney(vatTotal)) : ""}${rule}${line("TOTAL", formatMoney(row.n2_amount_price), true)}${tenders ? rule + tenders : ""}${rule}<p class="text-center text-slate-400">Thank you for your visit</p></div><button class="print-receipt mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>`;
+  const lines = state.details?.receipt ?? [];
+  if (!lines.length) return `<div class="py-12 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-slate-400"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#inbox" /></svg><p class="text-sm font-medium text-slate-500">No printed receipt was recorded for this transaction.</p></div></div>`;
+  const rows = lines.map((l) => String(l.val ?? "").replace(/''/g, "'"));
+  // Fit-to-width: the widest line drives the font size so the monospace receipt never needs a
+  // horizontal scrollbar. `cqw` measures the container's inner width; the font caps at 11px (so short
+  // receipts stay a tidy narrow slip) and shrinks only when a line would otherwise overflow. The 0.6
+  // factor approximates the monospace character advance; px-5 padding (2.5rem) is subtracted first.
+  const width = Math.max(1, ...rows.map((r) => r.length));
+  const font = `min(11px, calc((100cqw - 2.9rem) / ${width} / 0.6))`;
+  const paper = `<div style="container-type:inline-size"><pre id="receipt" style="font-size:${font}" class="mx-auto w-max max-w-full whitespace-pre rounded-lg border border-slate-200 bg-white px-5 py-6 font-mono leading-[1.45] text-slate-800 shadow-sm">${rows.map(clean).join("\n")}</pre></div>`;
+  return `${paper}<button class="print-receipt mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>`;
 }
 
 function drawerBodyMarkup() {
