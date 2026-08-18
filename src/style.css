@@ -3,16 +3,29 @@
 @tailwind utilities;
 
 @layer base {
-  /* Always reserve the scrollbar gutter so the page never shifts horizontally when a scrollbar
-     appears/disappears between re-renders (the main source of the flicker). */
-  html { scrollbar-gutter: stable; overflow-y: auto; }
+  html { overflow: hidden; }
   /* While a drawer/modal is open, lock the background scroll so there is a single active scrollbar
      (the overlay's) instead of two competing ones. The reserved gutter keeps the layout stable. */
   html.scroll-locked { overflow: hidden; }
-  body { @apply m-0 bg-[#f6f8ff] font-body text-ink antialiased; background-image: linear-gradient(rgba(37, 99, 235, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(37, 99, 235, 0.035) 1px, transparent 1px); background-size: 24px 24px; }
+  body { @apply m-0 bg-[#f6f8ff] font-body text-ink antialiased; height: 100vh; overflow: hidden; background-image: linear-gradient(rgba(37, 99, 235, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(37, 99, 235, 0.035) 1px, transparent 1px); background-size: 24px 24px; }
   button, input, select { font: inherit; }
   button { @apply cursor-pointer; }
 }
+
+#app {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+#app.scroll-locked .app-content { overflow: hidden; }
 
 /* Consistent thin, unobtrusive scrollbars everywhere (Firefox + WebKit/Chromium) so toggling them
    is far less visually jarring. */

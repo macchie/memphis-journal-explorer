@@ -446,15 +446,17 @@ function drawerMarkup() {
 
 function render() {
   // Lock the page behind the drawer/modal so only its scrollbar is active (no double scrollbar).
-  document.documentElement.classList.toggle("scroll-locked", Boolean(state.selected || state.manageOpen));
+  const scrollLocked = Boolean(state.selected || state.manageOpen);
+  document.documentElement.classList.toggle("scroll-locked", scrollLocked);
+  app.classList.toggle("scroll-locked", scrollLocked);
   if (!state.serversReady) { app.innerHTML = ""; return; }
   if (!selectedServer()) {
-    app.innerHTML = `${toolbarMarkup()}${interstitialMarkup()}${manageModalMarkup()}`;
+    app.innerHTML = `${toolbarMarkup()}<div class="app-content">${interstitialMarkup()}</div>${manageModalMarkup()}`;
     bindEvents();
     return;
   }
   const content = state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
-  app.innerHTML = `${toolbarMarkup()}${subToolbarMarkup()}<main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${content}</main>${drawerMarkup()}${manageModalMarkup()}`;
+  app.innerHTML = `${toolbarMarkup()}${subToolbarMarkup()}<div class="app-content"><main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${content}</main></div>${drawerMarkup()}${manageModalMarkup()}`;
   syncUrl();
   bindEvents();
 }
