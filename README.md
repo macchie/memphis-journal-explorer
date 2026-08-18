@@ -11,7 +11,7 @@
 
 A clean web app, backed by a lightweight [Bun](https://bun.sh) server, for browsing, analyzing, and
 auditing point-of-sale transactions. The backend runs **read-only** queries against the PostgreSQL
-`rdb_log` tables; the UI turns them into a searchable ledger, sales analytics, and a loss-prevention view.
+`rdb_log` tables; the UI turns them into a searchable ledger and a loss-prevention view.
 Runs in the browser or as a native **desktop app** via [Tauri](https://tauri.app).
 
 ## Features
@@ -21,9 +21,9 @@ Runs in the browser or as a native **desktop app** via [Tauri](https://tauri.app
   **CSV export**.
 - **Detail drawer** — line items, payments, discounts, and tax with per-section totals, plus a
   printable **receipt** view.
-- **Insights** — revenue by day, hour, store, and operator, and top-selling products.
-- **Exceptions** — a loss-prevention radar that flags voids, refunds, and heavy discounts, ranked by
-  risk, with an operator risk leaderboard.
+- **Exceptions** — a loss-prevention radar that ranks voids, refunds, heavy discounts, item overrides,
+  tender issues, POS alerts, loyalty activity, and unusually long transactions by explainable risk signals,
+  with an operator risk leaderboard.
 - **Multiple servers** — save named database servers (host or IP) and switch between them from the
   toolbar; the desktop app persists them per user, the browser build uses `localStorage`.
 - **Shareable URLs** — filters, sort, view, and the open transaction are encoded in the address bar.
@@ -91,7 +91,6 @@ OS config directory (e.g. `~/.config/com.elvispos.rdblog-explorer/` on Linux,
 | `GET /api/transactions.csv`| Export the filtered result set as CSV             |
 | `GET /api/transactions/:key`| Detail: items, payments, discounts, tax          |
 | `GET /api/facets`          | Distinct stores, terminals, and operators         |
-| `GET /api/insights`        | Aggregates by day, hour, store, operator, product |
 | `GET /api/exceptions`      | Flagged transactions and operator risk            |
 | `GET /api/health`          | Health check                                      |
 

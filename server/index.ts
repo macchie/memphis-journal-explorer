@@ -117,21 +117,31 @@ async function transactionsCsv(filters: Filters) {
 
 async function exceptions(filters: Filters) {
   const where = transactionWhere(filters);
-  const flagInner = `SELECT h.dt_time_stamp_st, h.n0_unique_str_no store, h.n0_terminal_no term, h.n0_xact_no xact, h.n0_operator_no oper, h.n2_amount_price amount, h.bl_refund, h.bl_voided, h.bl_void_prev, COALESCE(h.n0_tot_itm_voided, 0) item_voids, ${DISCOUNT_TOTAL} AS disc FROM public.rdb_log h WHERE ${where}`;
+  const transactionMatch = (table: string) => `${table}.dt_time_stamp = h.dt_time_stamp_st AND ${table}.n0_unique_str_no = h.n0_unique_str_no AND ${table}.n0_terminal_no = h.n0_terminal_no AND ${table}.n0_xact_no = h.n0_xact_no`;
+  // Bring independently recorded POS evidence into the exception scan. The correlated aggregates keep
+  // one candidate row per transaction and remain read-only against the source database.
+  const flagInner = `SELECT h.dt_time_stamp_st, h.n0_unique_str_no store, h.n0_terminal_no term, h.n0_xact_no xact, h.n0_operator_no oper, h.n2_amount_price amount, h.bl_refund, h.bl_voided, h.bl_void_prev, COALESCE(h.n0_tot_itm_voided, 0) item_voids, ${DISCOUNT_TOTAL} AS disc, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND (COALESCE(i.bl_price_req, 0) = 1 OR COALESCE(i.bl_quant_req, 0) = 1)), 0) manual_entries, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND COALESCE(i.bl_return, 0) = 1), 0) item_returns, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND COALESCE(i.bl_mgr_voided, 0) = 1), 0) manager_voids, COALESCE((SELECT COUNT(*) FROM public.rdb_log_tender t WHERE ${transactionMatch("t")} AND (COALESCE(t.bl_offline, 0) = 1 OR COALESCE(t.bl_denied, 0) = 1 OR COALESCE(t.bl_host_denied, 0) = 1)), 0) tender_issues, COALESCE((SELECT MAX(a.n0_alert_severity) FROM public.rdb_log_alert a WHERE ${transactionMatch("a")}), 0) alert_severity, COALESCE((SELECT COUNT(*) FROM public.rdb_log_cust_account c WHERE ${transactionMatch("c")}), 0) loyalty_changes, COALESCE(EXTRACT(EPOCH FROM (h.dt_time_stamp_end - h.dt_time_stamp_st)), 0) duration_seconds FROM public.rdb_log h WHERE ${where}`;
   const [candidates, operatorsRaw] = await Promise.all([
-    remoteQuery(`SELECT t.dt_time_stamp_st, t.store, t.term, t.xact, t.oper, t.amount, t.disc, t.bl_refund, t.bl_voided, t.bl_void_prev, t.item_voids FROM (${flagInner}) t WHERE t.bl_refund = '1' OR t.bl_voided = '1' OR t.bl_void_prev = '1' OR t.item_voids > 0 OR t.amount <= 0 OR (t.amount > 0 AND t.disc > t.amount / 2) ORDER BY t.dt_time_stamp_st DESC LIMIT 200`),
+    remoteQuery(`SELECT * FROM (${flagInner}) t WHERE t.bl_refund = '1' OR t.bl_voided = '1' OR t.bl_void_prev = '1' OR t.item_voids > 0 OR t.amount <= 0 OR (t.amount > 0 AND t.disc > t.amount / 2) OR t.manual_entries > 0 OR t.item_returns > 0 OR t.manager_voids > 0 OR t.tender_issues > 0 OR t.alert_severity >= 3 OR t.loyalty_changes > 0 OR t.duration_seconds > 1200 ORDER BY t.dt_time_stamp_st DESC LIMIT 200`),
     remoteQuery(`SELECT h.n0_operator_no oper, count(*) txns, count(*) FILTER (WHERE h.bl_refund = '1') refunds, count(*) FILTER (WHERE h.bl_voided = '1') voids FROM public.rdb_log h WHERE ${where} GROUP BY 1`),
   ]);
 
   const flagged = candidates.map((r) => {
-    const amount = num(r.amount), discount = num(r.disc), itemVoids = num(r.item_voids);
+    const amount = num(r.amount), discount = num(r.disc), itemVoids = num(r.item_voids), manualEntries = num(r.manual_entries), itemReturns = num(r.item_returns), managerVoids = num(r.manager_voids), tenderIssues = num(r.tender_issues), alertSeverity = num(r.alert_severity), loyaltyChanges = num(r.loyalty_changes), durationSeconds = num(r.duration_seconds);
     const reasons: { label: string; weight: number }[] = [];
-    if (r.bl_voided === "1") reasons.push({ label: "Voided transaction", weight: 40 });
-    if (r.bl_void_prev === "1") reasons.push({ label: "Voided a previous sale", weight: 35 });
-    if (r.bl_refund === "1") reasons.push({ label: "Refund", weight: 30 });
+    if (num(r.bl_voided) === 1) reasons.push({ label: "Voided transaction", weight: 40 });
+    if (num(r.bl_void_prev) === 1) reasons.push({ label: "Voided a previous sale", weight: 35 });
+    if (num(r.bl_refund) === 1) reasons.push({ label: "Refund", weight: 30 });
     if (itemVoids > 0) reasons.push({ label: `${itemVoids} item void${itemVoids > 1 ? "s" : ""}`, weight: 10 + itemVoids * 5 });
     if (amount <= 0) reasons.push({ label: "Non-positive amount", weight: 20 });
     if (amount > 0 && discount > amount / 2) reasons.push({ label: `Heavy discount (${Math.round((discount / amount) * 100)}%)`, weight: 30 });
+    if (manualEntries > 0) reasons.push({ label: `${manualEntries} manual item entr${manualEntries > 1 ? "ies" : "y"}`, weight: 10 + manualEntries * 5 });
+    if (itemReturns > 0) reasons.push({ label: `${itemReturns} returned item${itemReturns > 1 ? "s" : ""}`, weight: 15 + itemReturns * 5 });
+    if (managerVoids > 0) reasons.push({ label: `${managerVoids} manager item void${managerVoids > 1 ? "s" : ""}`, weight: 25 + managerVoids * 5 });
+    if (tenderIssues > 0) reasons.push({ label: `${tenderIssues} tender issue${tenderIssues > 1 ? "s" : ""}`, weight: 25 + tenderIssues * 5 });
+    if (alertSeverity >= 3) reasons.push({ label: `High-severity POS alert (${alertSeverity})`, weight: 15 + alertSeverity * 5 });
+    if (loyaltyChanges > 0) reasons.push({ label: `${loyaltyChanges} loyalty account change${loyaltyChanges > 1 ? "s" : ""}`, weight: 8 + loyaltyChanges * 2 });
+    if (durationSeconds > 1200) reasons.push({ label: `Long transaction (${Math.round(durationSeconds / 60)} min)`, weight: 15 });
     return { dt_time_stamp_st: r.dt_time_stamp_st, n0_unique_str_no: r.store, n0_terminal_no: r.term, n0_xact_no: r.xact, n0_operator_no: r.oper, n2_amount_price: amount, discount_total: discount, reasons: reasons.map((x) => x.label), score: reasons.reduce((s, x) => s + x.weight, 0) };
   }).sort((a, b) => b.score - a.score);
 

@@ -302,9 +302,9 @@ function exceptionsMarkup() {
   const operatorCard = `<section class="mb-5 overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><h3 class="border-b border-blue-100 px-5 py-3.5 text-sm font-bold text-ink">Operator risk</h3><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr><th class="px-4 py-2.5">Operator</th><th class="px-4 py-2.5">Txns</th><th class="px-4 py-2.5">Voids</th><th class="px-4 py-2.5">Refunds</th><th class="px-4 py-2.5">Risk</th></tr></thead><tbody>${opRows}</tbody></table></div></section>`;
 
   const flagBody = flagged.length
-    ? flagged.map((f) => `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40"><td class="whitespace-nowrap px-5 py-3.5 font-medium">${formatDate(f.dt_time_stamp_st)}</td><td class="px-5 py-3.5 font-semibold tabular-nums text-ink">#${clean(f.n0_xact_no)}</td><td class="px-5 py-3.5 tabular-nums text-slate-500">${clean(f.n0_unique_str_no)} · ${clean(f.n0_terminal_no)}</td><td class="px-5 py-3.5 tabular-nums">${clean(f.n0_operator_no)}</td><td class="whitespace-nowrap px-5 py-3.5 font-semibold tabular-nums ${Number(f.n2_amount_price) < 0 ? "text-clay" : ""}">${formatMoney(f.n2_amount_price)}</td><td class="px-5 py-3.5"><div class="flex flex-wrap gap-1">${f.reasons.map(reasonChip).join("")}</div></td><td class="px-5 py-3.5 text-center"><span class="inline-block rounded bg-slate-100 px-2 py-0.5 text-xs font-bold tabular-nums">${f.score}</span></td><td class="px-5 py-3.5 text-right"><button class="inspect font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(f))}">View</button></td></tr>`).join("")
-    : `<tr><td colspan="8" class="px-5 py-16 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-emerald-500"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#inbox" /></svg><p class="text-sm font-medium text-slate-500">No exceptions for these filters — all clean.</p></div></td></tr>`;
-  const flagCard = `<section class="overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><h3 class="border-b border-blue-100 px-5 py-3.5 text-sm font-bold text-ink">Flagged transactions <span class="font-medium text-slate-400">by risk score</span></h3><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr><th class="px-5 py-3">Date &amp; time</th><th class="px-5 py-3">Txn #</th><th class="px-5 py-3">Store · Term</th><th class="px-5 py-3">Operator</th><th class="px-5 py-3">Amount</th><th class="px-5 py-3">Flags</th><th class="px-5 py-3 text-center">Score</th><th class="px-5 py-3"></th></tr></thead><tbody>${flagBody}</tbody></table></div></section>`;
+    ? flagged.map((f) => `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40"><td class="whitespace-nowrap px-5 py-3.5 font-medium">${formatDate(f.dt_time_stamp_st)}</td><td class="px-5 py-3.5 font-semibold tabular-nums text-ink">#${clean(f.n0_xact_no)}</td><td class="px-5 py-3.5 tabular-nums text-slate-500">${clean(f.n0_unique_str_no)} · ${clean(f.n0_terminal_no)}</td><td class="px-5 py-3.5 tabular-nums">${clean(f.n0_operator_no)}</td><td class="whitespace-nowrap px-5 py-3.5 font-semibold tabular-nums ${Number(f.n2_amount_price) < 0 ? "text-clay" : ""}">${formatMoney(f.n2_amount_price)}</td><td class="whitespace-nowrap px-5 py-3.5 tabular-nums">${Number(f.discount_total) > 0 ? `<span class="font-medium text-emerald-600">-${formatMoney(f.discount_total)}</span>` : `<span class="text-slate-300">—</span>`}</td><td class="px-5 py-3.5"><div class="flex flex-wrap gap-1">${f.reasons.map(reasonChip).join("")}</div></td><td class="px-5 py-3.5 text-center"><span class="inline-block rounded bg-slate-100 px-2 py-0.5 text-xs font-bold tabular-nums">${f.score}</span></td><td class="px-5 py-3.5 text-right"><button class="inspect font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(f))}">View</button></td></tr>`).join("")
+    : `<tr><td colspan="9" class="px-5 py-16 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-emerald-500"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#inbox" /></svg><p class="text-sm font-medium text-slate-500">No exceptions for these filters — all clean.</p></div></td></tr>`;
+  const flagCard = `<section class="overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><h3 class="border-b border-blue-100 px-5 py-3.5 text-sm font-bold text-ink">Flagged transactions <span class="font-medium text-slate-400">by risk score</span></h3><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr><th class="px-5 py-3">Date &amp; time</th><th class="px-5 py-3">Txn #</th><th class="px-5 py-3">Store · Term</th><th class="px-5 py-3">Operator</th><th class="px-5 py-3">Amount</th><th class="px-5 py-3">Discount</th><th class="px-5 py-3">Flags</th><th class="px-5 py-3 text-center">Score</th><th class="px-5 py-3"></th></tr></thead><tbody>${flagBody}</tbody></table></div></section>`;
   return `${tiles}${operatorCard}${flagCard}`;
 }
 
@@ -478,12 +478,25 @@ function syncUrl() {
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
 }
 
+function currentLocalDate() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function defaultFilterDates() {
+  const today = currentLocalDate();
+  state.filters.dateFrom ??= today;
+  state.filters.dateTo ??= today;
+}
+
 function readUrl() {
   const query = new URLSearchParams(location.search);
   for (const key of ["store", "terminal", "operator", "type", "dateFrom", "dateTo", "minAmount", "maxAmount", "search"]) {
     const value = query.get(key);
     if (value) state.filters[key] = value;
   }
+  defaultFilterDates();
   if (query.get("view") === "exceptions") state.view = "exceptions";
   if (query.get("sort")) state.sort = query.get("sort")!;
   if (query.get("dir") === "asc") state.direction = "asc";
@@ -622,7 +635,7 @@ function bindEvents() {
   const filters = document.querySelector<HTMLFormElement>("#filters");
   filters?.addEventListener("input", (event) => { const target = event.target as HTMLInputElement; if (target.name) state.filters[target.name] = target.value; });
   filters?.addEventListener("submit", (event) => { event.preventDefault(); syncFilters(); state.range = null; state.page = 1; loadView(); });
-  filters?.addEventListener("reset", (event) => { event.preventDefault(); state.filters = {}; state.range = null; state.page = 1; loadView(); });
+  filters?.addEventListener("reset", (event) => { event.preventDefault(); state.filters = {}; defaultFilterDates(); state.range = null; state.page = 1; loadView(); });
   document.querySelectorAll<HTMLButtonElement>(".sort").forEach((button) => button.addEventListener("click", () => { const sort = button.dataset.sort!; state.direction = state.sort === sort && state.direction === "desc" ? "asc" : "desc"; state.sort = sort; state.page = 1; loadTransactions(); }));
   document.querySelectorAll<HTMLButtonElement>(".page").forEach((button) => button.addEventListener("click", () => { state.page += button.dataset.direction === "next" ? 1 : -1; loadTransactions(); }));
   document.querySelectorAll<HTMLButtonElement>(".inspect").forEach((button) => button.addEventListener("click", () => inspectTransaction(button.dataset.key!)));
