@@ -72,53 +72,6 @@
 .button-secondary { @apply border border-blue-200 bg-white text-blue-700 transition hover:border-blue-300 hover:bg-blue-50; }
 .button-range { @apply text-blue-700 transition hover:bg-blue-100; }
 
-.win-ctrl-btn {
-  display: inline-flex;
-  height: 2.5rem;
-  width: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  color: #94a3b8;
-  transition: background-color 0.15s ease, color 0.15s ease;
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: pointer;
-}
-.win-ctrl-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-}
-.win-ctrl-btn:active {
-  background-color: rgba(255, 255, 255, 0.2);
-}
-
-.win-ctrl-close {
-  display: inline-flex;
-  height: 2.5rem;
-  width: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  color: #94a3b8;
-  transition: background-color 0.15s ease, color 0.15s ease;
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: pointer;
-}
-.win-ctrl-close:hover {
-  background-color: #ef4444;
-  color: #ffffff;
-}
-.win-ctrl-close:active {
-  background-color: #dc2626;
-}
-
-.win-ctrl-btn svg,
-.win-ctrl-close svg {
-  pointer-events: none;
-  width: 14px;
-  height: 14px;
-}
-
 .app-titlebar {
   user-select: none;
   -webkit-user-select: none;
@@ -134,7 +87,6 @@
   .titlebar-primary { flex: 1 1 auto; }
   .titlebar-nav { order: 3; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex-basis: 100%; }
   .titlebar-nav .nav-tab { justify-content: center; }
-  .titlebar-window-controls { margin-left: auto; }
 }
 
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }

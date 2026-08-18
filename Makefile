@@ -4,7 +4,7 @@ install:
 	bun install
 
 dev:
-	bun run dev
+	exec bun run dev
 
 build:
 	bun run build
@@ -27,11 +27,9 @@ sidecar:
 #   * rdblog-server sidecar (:3000) - spawned by the Rust app (src-tauri/src/lib.rs)
 #
 # On Ctrl-C the Rust app catches SIGINT/SIGTERM, kills the sidecar and exits
-# cleanly, which lets `tauri dev` tear down Vite. The trap is a safety net that
-# reaps a stray sidecar so the terminal can never hang on a leftover child.
+# cleanly, which lets `tauri dev` tear down Vite.
 app-dev: sidecar
-	@trap 'pkill -f "rdblog-server-" 2>/dev/null || true' INT TERM EXIT; \
-	 bunx --bun @tauri-apps/cli dev
+	exec bunx --bun @tauri-apps/cli dev
 
 # Build the distributable desktop app (bundle in src-tauri/target/release/bundle/).
 app: sidecar

@@ -1,5 +1,4 @@
 import "./style.css";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Transaction = {
   dt_time_stamp_st: string;
@@ -50,7 +49,11 @@ const state = {
 
 // In the browser the API is same-origin (Vite proxies /api); inside the Tauri desktop shell the UI is
 // served from tauri:// and talks to the bundled Bun sidecar on localhost:3000.
-const IN_TAURI = typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__ || (window as any).__TAURI_IPC__);
+type TauriWindow = Window & { __TAURI_INTERNALS__?: { invoke?: unknown; metadata?: { currentWindow?: unknown } }; __TAURI__?: unknown; __TAURI_IPC__?: unknown };
+const tauriWindow = window as TauriWindow;
+// `getCurrentWindow()` requires the Tauri IPC bridge. A Vite server can be shared by a regular
+// browser during desktop development, so do not expose native controls based on a build flag alone.
+const IN_TAURI = typeof tauriWindow.__TAURI_INTERNALS__?.invoke === "function" && Boolean(tauriWindow.__TAURI_INTERNALS__?.metadata?.currentWindow);
 const API_BASE = IN_TAURI ? "http://localhost:3000" : "";
 const api = (path: string) => `${API_BASE}${path}`;
 async function apiFetch(path: string, init?: RequestInit) {
@@ -158,40 +161,6 @@ const badge = (label: string, tone: "amber" | "sky" | "red") => `<span class="ml
 const isVoided = (row: Transaction) => row.bl_voided === "1" || row.bl_voided === 1;
 const logo = () => `<svg class="brand-mark h-6 w-6 shrink-0" viewBox="0 0 40 40" aria-label="Sales Explorer logo" role="img"><rect width="40" height="40" rx="9" fill="#3b82f6"/><path d="M11 13.5h18M11 20h18M11 26.5h11" stroke="#eff6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="27" cy="26.5" r="4" fill="#bfdbfe"/><path d="m25.3 26.5 1.15 1.15 2.25-2.35" stroke="#1e3a8a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-let isMaximized = false;
-if (IN_TAURI) {
-  try {
-    const appWin = getCurrentWindow();
-    appWin.isMaximized().then((max) => { isMaximized = max; });
-    appWin.onResized(() => {
-      appWin.isMaximized().then((max) => {
-        if (isMaximized !== max) {
-          isMaximized = max;
-          updateWinControls();
-        }
-      });
-    });
-  } catch { /* best effort */ }
-}
-
-function updateWinControls() {
-  const btn = document.querySelector<HTMLButtonElement>("#win-maximize");
-  if (btn) {
-    const maxIcon = isMaximized ? "win-restore" : "win-maximize";
-    const maxTitle = isMaximized ? "Restore window" : "Maximize window";
-    btn.title = maxTitle;
-    btn.setAttribute("aria-label", maxTitle);
-    btn.innerHTML = icon(maxIcon);
-  }
-}
-
-function windowControlsMarkup() {
-  if (!IN_TAURI) return "";
-  const maxIcon = isMaximized ? "win-restore" : "win-maximize";
-  const maxTitle = isMaximized ? "Restore window" : "Maximize window";
-  return `<div class="titlebar-window-controls flex items-center h-full shrink-0 select-none border-l border-slate-800 ml-2 pl-1"><button class="win-ctrl-btn" id="win-minimize" title="Minimize window" aria-label="Minimize window">${icon("win-minimize")}</button><button class="win-ctrl-btn" id="win-maximize" title="${maxTitle}" aria-label="${maxTitle}">${icon(maxIcon)}</button><button class="win-ctrl-close" id="win-close" title="Close window" aria-label="Close window">${icon("win-close")}</button></div>`;
-}
-
 function serverSwitcherMarkup() {
   if (!state.servers.length) return "";
   const options = state.servers.map((s) => `<option value="${clean(s.id)}" ${s.id === state.selectedServerId ? "selected" : ""}>${clean(s.name)}</option>`).join("");
@@ -201,11 +170,7 @@ function serverSwitcherMarkup() {
 function toolbarMarkup() {
   const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition ${state.view === view ? "bg-slate-800 text-white shadow-sm border-b-2 border-blue-500" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"}" data-view="${view}">${icon(ic)}<span>${label}</span></button>`;
   const nav = selectedServer() ? `<nav class="titlebar-nav flex shrink-0 gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
-  // `data-tauri-drag-region` is applied to the non-interactive layout containers so the titlebar can be
-  // dragged (and double-clicked to maximize) exactly like a native title bar; interactive children
-  // (buttons, nav, select) deliberately omit it so their own clicks are not swallowed by the drag.
-  const drag = IN_TAURI ? " data-tauri-drag-region" : "";
-  return `<header${drag} class="app-titlebar sticky top-0 z-30 flex min-h-10 w-full select-none items-center gap-3 border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div${drag} class="titlebar-primary flex min-w-0 items-center gap-3"><div${drag} class="flex shrink-0 items-center gap-2">${logo()}<span${drag} class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div>${nav}${windowControlsMarkup()}</header>`;
+  return `<header class="app-titlebar sticky top-0 z-30 flex min-h-10 w-full select-none items-center gap-3 border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div class="titlebar-primary flex min-w-0 items-center gap-3"><div class="flex shrink-0 items-center gap-2">${logo()}<span class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div>${nav}</header>`;
 }
 
 function interstitialMarkup() {
@@ -673,26 +638,6 @@ function bindEvents() {
   document.querySelectorAll<HTMLElement>("[data-close]").forEach((element) => element.addEventListener("click", closeDrawer));
   document.querySelectorAll<HTMLButtonElement>(".range").forEach((button) => button.addEventListener("click", () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(); from.setDate(to.getDate() - days); state.filters.dateFrom = from.toISOString().slice(0, 10); state.filters.dateTo = to.toISOString().slice(0, 10); state.range = days; state.page = 1; loadView(); }));
   document.querySelector<HTMLButtonElement>(".export-csv")?.addEventListener("click", exportCsv);
-  if (IN_TAURI) {
-    // Custom window controls, per the official Tauri v2 window-customization guide: call the window API
-    // directly. Dragging and double-click-to-maximize are handled natively via `data-tauri-drag-region`.
-    const appWin = getCurrentWindow();
-    document.querySelector<HTMLButtonElement>("#win-minimize")?.addEventListener("click", () => {
-      appWin.minimize().catch((err) => console.error("minimize failed", err));
-    });
-    document.querySelector<HTMLButtonElement>("#win-maximize")?.addEventListener("click", async () => {
-      try {
-        await appWin.toggleMaximize();
-        isMaximized = await appWin.isMaximized();
-        updateWinControls();
-      } catch (err) {
-        console.error("toggle maximize failed", err);
-      }
-    });
-    document.querySelector<HTMLButtonElement>("#win-close")?.addEventListener("click", () => {
-      appWin.close().catch((err) => console.error("close failed", err));
-    });
-  }
   bindServerEvents();
   bindDrawerBody();
 }
