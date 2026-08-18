@@ -307,12 +307,12 @@ function exceptionsMarkup() {
 
 // --- transaction detail drawer ---------------------------------------------
 
-function section(title: string, rows: Detail[], columns: [string, string][], currencyColumns: string[] = [], percentageColumns: string[] = [], totalKey?: string) {
+function section(title: string, rows: Detail[], columns: [string, string][], currencyColumns: string[] = [], percentageColumns: string[] = [], totalKey?: string, rowAction?: (row: Detail) => string) {
   const heading = `<h3 class="mb-2 flex items-baseline justify-between text-sm font-bold">${title}<span class="text-xs font-medium text-slate-400">${rows.length} ${rows.length === 1 ? "row" : "rows"}</span></h3>`;
   if (!rows.length) return `<section>${heading}<p class="border-y border-slate-100 py-4 text-sm text-slate-500">No records.</p></section>`;
   const total = totalKey ? rows.reduce((sum, row) => sum + Number(row[totalKey] ?? 0), 0) : null;
-  const footer = totalKey ? `<tfoot><tr class="border-t-2 border-slate-200 font-semibold"><td class="px-3 py-2.5 text-slate-500">Total</td>${columns.slice(1).map(([key]) => `<td class="px-3 py-2.5 tabular-nums">${key === totalKey ? formatMoney(total) : ""}</td>`).join("")}</tr></tfoot>` : "";
-  return `<section>${heading}<div class="overflow-x-auto border-y border-slate-100"><table class="min-w-full text-sm"><thead class="bg-slate-50 text-left text-xs text-slate-500"><tr>${columns.map(([, label]) => `<th class="px-3 py-2 font-semibold">${label}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr class="border-t border-slate-100">${columns.map(([key]) => `<td class="px-3 py-2.5 ${currencyColumns.includes(key) ? "tabular-nums" : ""}">${currencyColumns.includes(key) ? formatMoney(row[key]) : percentageColumns.includes(key) ? formatPercentage(row[key]) : clean(row[key])}</td>`).join("")}</tr>`).join("")}</tbody>${footer}</table></div></section>`;
+  const footer = totalKey ? `<tfoot><tr class="border-t-2 border-slate-200 font-semibold"><td class="px-3 py-2.5 text-slate-500">Total</td>${columns.slice(1).map(([key]) => `<td class="px-3 py-2.5 tabular-nums">${key === totalKey ? formatMoney(total) : ""}</td>`).join("")}${rowAction ? `<td class="px-3 py-2.5"></td>` : ""}</tr></tfoot>` : "";
+  return `<section>${heading}<div class="overflow-x-auto border-y border-slate-100"><table class="min-w-full text-sm"><thead class="bg-slate-50 text-left text-xs text-slate-500"><tr>${columns.map(([, label]) => `<th class="px-3 py-2 font-semibold">${label}</th>`).join("")}${rowAction ? `<th class="px-3 py-2"></th>` : ""}</tr></thead><tbody>${rows.map((row) => `<tr class="border-t border-slate-100">${columns.map(([key]) => `<td class="px-3 py-2.5 ${currencyColumns.includes(key) ? "tabular-nums" : ""}">${currencyColumns.includes(key) ? formatMoney(row[key]) : percentageColumns.includes(key) ? formatPercentage(row[key]) : clean(row[key])}</td>`).join("")}${rowAction ? `<td class="px-3 py-2.5 text-right">${rowAction(row)}</td>` : ""}</tr>`).join("")}</tbody>${footer}</table></div></section>`;
 }
 
 // Friendly rendering for the rdb_log_info event trail. Each POS event maps to a label and a
@@ -394,9 +394,18 @@ function alertsMarkup(rows: Detail[]) {
   return `<section>${heading}<div class="space-y-2">${items}</div></section>`;
 }
 
+// Per-item action: search every transaction containing this article. Prefer the item reference
+// (stable product code) and fall back to the description; the backend matches either.
+const itemSearchTerm = (row: Detail) => String(row.sz_item_ref_no ?? "").trim() || String(row.sz_description ?? "").trim();
+function itemSearchButton(row: Detail) {
+  const term = itemSearchTerm(row);
+  if (!term) return "";
+  return `<button class="search-item inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-semibold text-pine transition hover:bg-mist hover:text-ink" data-term="${clean(term)}" title="Find all transactions with this item" aria-label="Find all transactions with this item">${icon("search")}</button>`;
+}
+
 function detailSectionsMarkup() {
   const d = state.details!;
-  return `<div class="space-y-6">${alertsMarkup(d.alerts ?? [])}${loyaltyMarkup(d.loyalty ?? [])}${section("Items", d.items, [["sz_description", "Description"], ["n0_quantity", "Qty"], ["n2_ext_price", "Line amount"]], ["n2_ext_price"], [], "n2_ext_price")}${section("Payments", d.tenders, [["sz_description", "Method"], ["n2_amount", "Amount"], ["sz_auth_number", "Authorisation"]], ["n2_amount"], [], "n2_amount")}${section("Discounts", d.discounts, [["sz_description", "Description"], ["n0_perc_off", "Rate"], ["n2_disc_amount", "Amount"]], ["n2_disc_amount"], [], "n2_disc_amount")}${section("Tax", d.vat, [["n0_tax_code", "Tax code"], ["n3_vat_percentage", "Rate"], ["n2_vat_amount", "Tax amount"]], ["n2_vat_amount"], ["n3_vat_percentage"], "n2_vat_amount")}${timelineMarkup(d.info ?? [])}</div>`;
+  return `<div class="space-y-6">${alertsMarkup(d.alerts ?? [])}${loyaltyMarkup(d.loyalty ?? [])}${section("Items", d.items, [["sz_description", "Description"], ["n0_quantity", "Qty"], ["n2_ext_price", "Line amount"]], ["n2_ext_price"], [], "n2_ext_price", itemSearchButton)}${section("Payments", d.tenders, [["sz_description", "Method"], ["n2_amount", "Amount"], ["sz_auth_number", "Authorisation"]], ["n2_amount"], [], "n2_amount")}${section("Discounts", d.discounts, [["sz_description", "Description"], ["n0_perc_off", "Rate"], ["n2_disc_amount", "Amount"]], ["n2_disc_amount"], [], "n2_disc_amount")}${section("Tax", d.vat, [["n0_tax_code", "Tax code"], ["n3_vat_percentage", "Rate"], ["n2_vat_amount", "Tax amount"]], ["n2_vat_amount"], ["n3_vat_percentage"], "n2_vat_amount")}${timelineMarkup(d.info ?? [])}</div>`;
 }
 
 function receiptMarkup() {
@@ -568,6 +577,16 @@ async function inspectTransaction(key: string) {
 const closeDrawer = () => { if (!state.selected) return; state.selected = null; state.details = null; render(); };
 window.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
 
+// Jump from an item in the detail drawer to the transaction list filtered by that article.
+function searchByItem(term: string) {
+  state.filters.search = term;
+  state.view = "transactions";
+  state.selected = null;
+  state.details = null;
+  state.page = 1;
+  loadTransactions();
+}
+
 // --- events -----------------------------------------------------------------
 
 function bindDrawerBody() {
@@ -577,6 +596,7 @@ function bindDrawerBody() {
     if (detail) { detail.innerHTML = drawerBodyMarkup(); bindDrawerBody(); }
   }));
   document.querySelector<HTMLButtonElement>(".print-receipt")?.addEventListener("click", () => window.print());
+  document.querySelectorAll<HTMLButtonElement>(".search-item").forEach((button) => button.addEventListener("click", () => searchByItem(button.dataset.term!)));
 }
 
 function bindEvents() {
