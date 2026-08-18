@@ -50,6 +50,10 @@ function transactionWhere(filters: Filters) {
   if (isInteger(filters.store)) clauses.push(`h.n0_unique_str_no = ${filters.store}`);
   if (isInteger(filters.terminal)) clauses.push(`h.n0_terminal_no = ${filters.terminal}`);
   if (isInteger(filters.operator)) clauses.push(`h.n0_operator_no = ${filters.operator}`);
+  // Transaction type derived from the header flags: a "sale" is a normal, non-refund, non-voided line.
+  if (filters.type === "voided") clauses.push("COALESCE(h.bl_voided, 0) = 1");
+  else if (filters.type === "refund") clauses.push("COALESCE(h.bl_refund, 0) = 1");
+  else if (filters.type === "sale") clauses.push("COALESCE(h.bl_refund, 0) <> 1 AND COALESCE(h.bl_voided, 0) <> 1");
   if (filters.dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(filters.dateFrom)) clauses.push(`h.dt_time_stamp_st >= '${filters.dateFrom}'::date`);
   if (filters.dateTo && /^\d{4}-\d{2}-\d{2}$/.test(filters.dateTo)) clauses.push(`h.dt_time_stamp_st < ('${filters.dateTo}'::date + interval '1 day')`);
   if (isNumber(filters.minAmount)) clauses.push(`h.n2_amount_price >= ${Math.round(Number(filters.minAmount) * 100)}`);

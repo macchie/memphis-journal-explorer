@@ -235,9 +235,10 @@ function pageHeaderMarkup() {
   return `<section class="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">${meta.k}</p><h1 class="mt-1 font-display text-3xl font-semibold">${meta.t}</h1><p class="mt-1 text-sm text-slate-500">${meta.d}</p></div><div class="flex items-end gap-2">${exportBtn}</div></section>`;
 }
 
-function select(name: string, label: string, placeholder: string, options: string[] = []) {
+function select(name: string, label: string, placeholder: string, options: (string | [string, string])[] = []) {
   const current = state.filters[name] ?? "";
-  return `<label><span class="label">${label}</span><select class="control appearance-none bg-[right_0.6rem_center] bg-no-repeat pr-8" name="${name}" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 fill=%22none%22 stroke=%22%2394a3b8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22m3 4.5 3 3 3-3%22/></svg>')"><option value="">${placeholder}</option>${options.map((value) => `<option value="${clean(value)}" ${current === value ? "selected" : ""}>${clean(value)}</option>`).join("")}</select></label>`;
+  const option = (opt: string | [string, string]) => { const [value, text] = Array.isArray(opt) ? opt : [opt, opt]; return `<option value="${clean(value)}" ${current === value ? "selected" : ""}>${clean(text)}</option>`; };
+  return `<label><span class="label">${label}</span><select class="control appearance-none bg-[right_0.6rem_center] bg-no-repeat pr-8" name="${name}" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 fill=%22none%22 stroke=%22%2394a3b8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22m3 4.5 3 3 3-3%22/></svg>')"><option value="">${placeholder}</option>${options.map(option).join("")}</select></label>`;
 }
 
 function field(name: string, label: string, attrs: string) {
@@ -246,7 +247,7 @@ function field(name: string, label: string, attrs: string) {
 
 function filterMarkup() {
   const search = state.filters.search ?? "";
-  return `<form id="filters" class="mb-5 rounded-lg border border-blue-100 bg-white p-4 shadow-panel"><div class="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">${icon("sliders")} Refine results</div><div class="grid gap-3 md:grid-cols-2 xl:grid-cols-6"><label class="xl:col-span-2"><span class="label">Search</span><div class="relative"><input class="control pl-9" name="search" value="${clean(search)}" placeholder="Article, transaction, store..." /><span class="pointer-events-none absolute left-3 top-3 text-blue-400">${icon("search")}</span></div></label><label><span class="label">From</span><input class="control" name="dateFrom" type="date" value="${clean(state.filters.dateFrom ?? "")}" /></label><label><span class="label">To</span><input class="control" name="dateTo" type="date" value="${clean(state.filters.dateTo ?? "")}" /></label>${select("store", "Store", "All stores", state.facets?.stores)}${select("terminal", "Terminal", "All terminals", state.facets?.terminals)}${select("operator", "Operator", "All operators", state.facets?.operators)}${field("minAmount", "Min amount", 'inputmode="decimal" placeholder="0.00"')}${field("maxAmount", "Max amount", 'inputmode="decimal" placeholder="0.00"')}<div class="flex items-end gap-2"><button class="flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button><button type="reset" class="button-secondary h-10 rounded-md px-3 text-sm font-medium">Clear</button></div></div></form>`;
+  return `<form id="filters" class="mb-5 rounded-lg border border-blue-100 bg-white p-4 shadow-panel"><div class="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">${icon("sliders")} Refine results</div><div class="grid gap-3 md:grid-cols-2 xl:grid-cols-6"><label class="xl:col-span-2"><span class="label">Search</span><div class="relative"><input class="control pl-9" name="search" value="${clean(search)}" placeholder="Article, transaction, store..." /><span class="pointer-events-none absolute left-3 top-3 text-blue-400">${icon("search")}</span></div></label><label><span class="label">From</span><input class="control" name="dateFrom" type="date" value="${clean(state.filters.dateFrom ?? "")}" /></label><label><span class="label">To</span><input class="control" name="dateTo" type="date" value="${clean(state.filters.dateTo ?? "")}" /></label>${select("store", "Store", "All stores", state.facets?.stores)}${select("terminal", "Terminal", "All terminals", state.facets?.terminals)}${select("operator", "Operator", "All operators", state.facets?.operators)}${select("type", "Type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${field("minAmount", "Min amount", 'inputmode="decimal" placeholder="0.00"')}${field("maxAmount", "Max amount", 'inputmode="decimal" placeholder="0.00"')}<div class="flex items-end gap-2"><button class="flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button><button type="reset" class="button-secondary h-10 rounded-md px-3 text-sm font-medium">Clear</button></div></div></form>`;
 }
 
 // --- transactions view ------------------------------------------------------
@@ -469,7 +470,7 @@ function syncUrl() {
 
 function readUrl() {
   const query = new URLSearchParams(location.search);
-  for (const key of ["store", "terminal", "operator", "dateFrom", "dateTo", "minAmount", "maxAmount", "search"]) {
+  for (const key of ["store", "terminal", "operator", "type", "dateFrom", "dateTo", "minAmount", "maxAmount", "search"]) {
     const value = query.get(key);
     if (value) state.filters[key] = value;
   }
