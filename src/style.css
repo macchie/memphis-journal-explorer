@@ -48,6 +48,7 @@
   .toolbar-bare { @apply min-w-0 border-0 bg-transparent p-0 text-slate-100 outline-none placeholder:text-slate-500 focus:ring-0; }
   .drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); scrollbar-gutter: stable; }
 }
+.toolbar-native-date { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .toolbar-search { flex: 1 1 14rem; }
 .toolbar-select { flex: 0 1 7rem; width: 7rem; }
 

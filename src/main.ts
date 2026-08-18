@@ -245,8 +245,10 @@ function tbSelect(name: string, placeholder: string, options: (string | [string,
 // grouped range controls; Clear (icon-only) and Apply sit on the right.
 function subToolbarMarkup() {
   const val = (name: string) => clean(state.filters[name] ?? "");
+  const date = (name: string) => clean(formatFilterDate(state.filters[name] ?? ""));
+  const datePicker = (name: "dateFrom" | "dateTo", label: string) => `<div class="relative flex min-w-0 items-center"><input type="text" data-date-display="${name}" value="${date(name)}" class="toolbar-bare w-[5.5rem] sm:w-[6.25rem]" inputmode="numeric" pattern="\\d{2}/\\d{2}/\\d{4}" placeholder="DD/MM/YYYY" aria-label="${label}" /><input type="date" data-date-picker="${name}" value="${val(name)}" class="toolbar-native-date" tabindex="-1" aria-hidden="true" /><button type="button" class="date-picker flex h-6 w-5 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100" data-date-picker-button="${name}" title="Choose ${label.toLowerCase()}" aria-label="Choose ${label.toLowerCase()}">${icon("calendar")}</button></div>`;
   const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-8" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
-  const period = `<div class="toolbar-group"><input type="date" name="dateFrom" value="${val("dateFrom")}" class="toolbar-bare w-[6.25rem] sm:w-[6.75rem]" aria-label="From date" /><span class="text-slate-500">–</span><input type="date" name="dateTo" value="${val("dateTo")}" class="toolbar-bare w-[6.25rem] sm:w-[6.75rem]" aria-label="To date" /></div>`;
+  const period = `<div class="toolbar-group">${datePicker("dateFrom", "From date")}<span class="text-slate-500">–</span>${datePicker("dateTo", "To date")}</div>`;
   const amount = `<div class="toolbar-group"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Max amount" /></div>`;
   const actions = `<div class="flex shrink-0 items-center gap-1.5"><button type="reset" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-pine px-3 text-xs font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
   return `<div class="sticky top-10 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-1.5 px-3 py-2">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${period}${amount}${actions}</form></div>`;
@@ -271,7 +273,7 @@ function tableMarkup() {
   const body = state.loading
     ? Array.from({ length: 8 }, () => `<tr class="border-b border-slate-100 last:border-0">${Array.from({ length: 9 }, () => `<td class="px-5 py-4"><div class="h-3.5 rounded bg-slate-100"></div></td>`).join("")}</tr>`).join("")
     : state.rows.length
-    ? state.rows.map((row) => { const voided = isVoided(row); return `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40 ${voided ? "bg-red-50/40 text-slate-400" : ""}"><td class="whitespace-nowrap px-5 py-4 font-medium">${formatDate(row.dt_time_stamp_st)}</td><td class="px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : "text-ink"}">#${clean(row.n0_xact_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_unique_str_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_terminal_no)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_operator_no)}</td><td class="whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400 line-through decoration-red-400" : Number(row.n2_amount_price) < 0 ? "text-clay" : ""}">${formatMoney(row.n2_amount_price)}${voided ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</td><td class="whitespace-nowrap px-5 py-4 tabular-nums">${discountCell(row)}</td><td class="px-5 py-4 tabular-nums">${clean(row.n0_tot_sold_item)}</td><td class="px-5 py-4 text-right"><button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button></td></tr>`; }).join("")
+    ? state.rows.map((row) => { const voided = isVoided(row); const cell = (classes: string, content: string, strike = true) => `<td class="${classes} ${voided && strike ? "line-through decoration-red-400" : ""}">${content}</td>`; return `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40 ${voided ? "bg-red-50/40 text-slate-400" : ""}">${cell("whitespace-nowrap px-5 py-4 font-medium", formatDate(row.dt_time_stamp_st))}${cell(`px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : "text-ink"}`, `#${clean(row.n0_xact_no)}`)}${cell("px-5 py-4 tabular-nums", clean(row.n0_unique_str_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_terminal_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_operator_no))}${cell(`whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : Number(row.n2_amount_price) < 0 ? "text-clay" : ""}`, `${formatMoney(row.n2_amount_price)}${voided ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}`)}${cell("whitespace-nowrap px-5 py-4 tabular-nums", discountCell(row))}${cell("px-5 py-4 tabular-nums", clean(row.n0_tot_sold_item))}${cell("px-5 py-4 text-right", `<button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button>`, false)}</tr>`; }).join("")
     : emptyState;
   const from = state.rows.length ? (state.page - 1) * 25 + 1 : 0;
   const to = (state.page - 1) * 25 + state.rows.length;
@@ -484,6 +486,19 @@ function currentLocalDate() {
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function formatFilterDate(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+function parseFilterDate(value: string) {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return "";
+  const [, day, month, year] = match;
+  const parsed = new Date(`${year}-${month}-${day}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== Number(year) || parsed.getMonth() !== Number(month) - 1 || parsed.getDate() !== Number(day) ? "" : `${year}-${month}-${day}`;
+}
+
 function defaultFilterDates() {
   const today = currentLocalDate();
   state.filters.dateFrom ??= today;
@@ -507,7 +522,12 @@ function readUrl() {
 function syncFilters() {
   const form = document.querySelector<HTMLFormElement>("#filters");
   if (!form) return;
-  for (const [key, value] of new FormData(form).entries()) state.filters[key] = String(value);
+  for (const [key, value] of new FormData(form).entries()) {
+    state.filters[key] = key === "dateFrom" || key === "dateTo" ? parseFilterDate(String(value)) : String(value);
+  }
+  form.querySelectorAll<HTMLInputElement>("[data-date-display]").forEach((input) => {
+    state.filters[input.dataset.dateDisplay!] = parseFilterDate(input.value);
+  });
 }
 
 // --- data loading -----------------------------------------------------------
@@ -634,6 +654,17 @@ function bindEvents() {
   }));
   const filters = document.querySelector<HTMLFormElement>("#filters");
   filters?.addEventListener("input", (event) => { const target = event.target as HTMLInputElement; if (target.name) state.filters[target.name] = target.value; });
+  document.querySelectorAll<HTMLButtonElement>(".date-picker").forEach((button) => button.addEventListener("click", () => {
+    const picker = document.querySelector<HTMLInputElement>(`[data-date-picker="${button.dataset.datePickerButton}"]`);
+    if (picker?.showPicker) picker.showPicker();
+    else { picker?.focus(); picker?.click(); }
+  }));
+  document.querySelectorAll<HTMLInputElement>("[data-date-picker]").forEach((picker) => picker.addEventListener("change", () => {
+    const name = picker.dataset.datePicker!;
+    const display = document.querySelector<HTMLInputElement>(`[data-date-display="${name}"]`);
+    if (display) display.value = formatFilterDate(picker.value);
+    state.filters[name] = picker.value;
+  }));
   filters?.addEventListener("submit", (event) => { event.preventDefault(); syncFilters(); state.range = null; state.page = 1; loadView(); });
   filters?.addEventListener("reset", (event) => { event.preventDefault(); state.filters = {}; defaultFilterDates(); state.range = null; state.page = 1; loadView(); });
   document.querySelectorAll<HTMLButtonElement>(".sort").forEach((button) => button.addEventListener("click", () => { const sort = button.dataset.sort!; state.direction = state.sort === sort && state.direction === "desc" ? "asc" : "desc"; state.sort = sort; state.page = 1; loadTransactions(); }));
