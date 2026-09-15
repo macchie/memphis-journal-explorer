@@ -58,6 +58,16 @@ function transactionWhere(filters: Filters) {
   if (filters.dateTo && /^\d{4}-\d{2}-\d{2}$/.test(filters.dateTo)) clauses.push(`h.dt_time_stamp_st < ('${filters.dateTo}'::date + interval '1 day')`);
   if (isNumber(filters.minAmount)) clauses.push(`h.n2_amount_price >= ${Math.round(Number(filters.minAmount) * 100)}`);
   if (isNumber(filters.maxAmount)) clauses.push(`h.n2_amount_price <= ${Math.round(Number(filters.maxAmount) * 100)}`);
+  const transactionMatch = (table: string) => `${table}.dt_time_stamp = h.dt_time_stamp_st AND ${table}.n0_unique_str_no = h.n0_unique_str_no AND ${table}.n0_terminal_no = h.n0_terminal_no AND ${table}.n0_xact_no = h.n0_xact_no`;
+  const paymentTypes = [...new Set((filters.paymentTypes ?? "").split(",").map((value) => value.trim()).filter(Boolean))];
+  if (paymentTypes.length) {
+    const values = paymentTypes.map((value) => `'${escapeLiteral(value)}'`).join(", ");
+    clauses.push(`EXISTS (SELECT 1 FROM public.rdb_log_tender t WHERE ${transactionMatch("t")} AND TRIM(COALESCE(t.sz_description, t.sz_tender_type, '')) IN (${values}))`);
+  }
+  if (filters.loyaltyCard?.trim()) {
+    const cardNumber = escapeLiteral(filters.loyaltyCard.trim());
+    clauses.push(`EXISTS (SELECT 1 FROM public.rdb_log_cust_account c WHERE ${transactionMatch("c")} AND TRIM(COALESCE(c.sz_customer_no, '')) ILIKE '%${cardNumber}%')`);
+  }
   if (filters.search?.trim()) {
     const term = escapeLiteral(filters.search.trim());
     clauses.push(`(CAST(h.n0_xact_no AS text) ILIKE '%${term}%' OR CAST(h.n0_unique_str_no AS text) ILIKE '%${term}%' OR EXISTS (SELECT 1 FROM public.rdb_log_item i WHERE i.dt_time_stamp = h.dt_time_stamp_st AND i.n0_unique_str_no = h.n0_unique_str_no AND i.n0_terminal_no = h.n0_terminal_no AND i.n0_xact_no = h.n0_xact_no AND (i.sz_description ILIKE '%${term}%' OR TRIM(i.sz_item_ref_no) ILIKE '%${term}%')))`);
@@ -206,13 +216,14 @@ Bun.serve({
         return response({ server: remoteServer });
       }
       if (url.pathname === "/api/facets") {
-        const [stores, terminals, operators] = await Promise.all([
+        const [stores, terminals, operators, paymentTypes] = await Promise.all([
           remoteQuery("SELECT DISTINCT n0_unique_str_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"),
           remoteQuery("SELECT DISTINCT n0_terminal_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"),
           remoteQuery("SELECT DISTINCT n0_operator_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"),
+          remoteQuery("SELECT DISTINCT TRIM(COALESCE(sz_description, sz_tender_type, '')) AS value FROM public.rdb_log_tender WHERE TRIM(COALESCE(sz_description, sz_tender_type, '')) <> '' ORDER BY 1"),
         ]);
         const values = (rows: Row[]) => rows.map((row) => String(row.value));
-        return response({ stores: values(stores), terminals: values(terminals), operators: values(operators) });
+        return response({ stores: values(stores), terminals: values(terminals), operators: values(operators), paymentTypes: values(paymentTypes) });
       }
       if (url.pathname === "/api/transactions") return await transactionsList(filters);
       if (url.pathname === "/api/transactions.csv") return await transactionsCsv(filters);

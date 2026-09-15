@@ -16,7 +16,7 @@ type Transaction = {
 
 type Detail = Record<string, unknown>;
 type Details = { items: Detail[]; tenders: Detail[]; discounts: Detail[]; vat: Detail[]; info: Detail[]; loyalty: Detail[]; alerts: Detail[]; receipt: Detail[] };
-type Facets = { stores: string[]; terminals: string[]; operators: string[] };
+type Facets = { stores: string[]; terminals: string[]; operators: string[]; paymentTypes: string[] };
 type Summary = { total: number; salesTotal: number; refundCount: number; voidCount: number; discountTotal: number };
 type Flagged = Transaction & { reasons: string[]; score: number };
 type Operator = { operator: string; txns: number; voids: number; refunds: number; voidRate: number; risk: number };
@@ -204,6 +204,13 @@ function tbSelect(name: string, placeholder: string, options: (string | [string,
   return `<select class="toolbar-field toolbar-select appearance-none bg-[right_0.5rem_center] bg-no-repeat pr-7 [&>option]:bg-slate-900 [&>option]:text-slate-100 ${current ? "font-medium text-slate-100" : "text-slate-400"}" name="${name}" aria-label="${clean(placeholder)}" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 fill=%22none%22 stroke=%22%2394a3b8%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22m3 4.5 3 3 3-3%22/></svg>')"><option value="">${clean(placeholder)}</option>${options.map(option).join("")}</select>`;
 }
 
+function paymentTypeSelect() {
+  const selected = (state.filters.paymentTypes ?? "").split(",").filter(Boolean);
+  const label = selected.length ? `${selected.length} payment type${selected.length === 1 ? "" : "s"}` : "All payment types";
+  const options = (state.facets?.paymentTypes ?? []).map((paymentType) => `<label class="flex min-h-11 cursor-pointer items-center gap-2 px-3 text-sm text-slate-100 hover:bg-slate-700"><input class="h-5 w-5 rounded border-slate-500 bg-slate-800 text-pine focus:ring-blue-500" type="checkbox" name="paymentType" value="${clean(paymentType)}" ${selected.includes(paymentType) ? "checked" : ""} /><span class="truncate">${clean(paymentType)}</span></label>`).join("") || `<p class="px-3 py-3 text-sm text-slate-400">No payment types found.</p>`;
+  return `<details class="payment-types relative shrink-0"><summary class="toolbar-field flex h-11 min-w-40 cursor-pointer list-none items-center justify-between gap-2 px-3"><span class="truncate">${clean(label)}</span><span class="text-slate-400">${icon("chevron")}</span></summary><div class="absolute left-0 z-40 mt-1 max-h-72 w-64 overflow-y-auto rounded-md border border-slate-700 bg-slate-800 py-1 shadow-xl">${options}</div></details>`;
+}
+
 // The filter sub-toolbar: same fields/logic as before (form#filters), reorganised into a compact,
 // sticky dark secondary bar under the app title bar. All controls sit on a single non-wrapping row —
 // search flexes/shrinks; store/terminal/operator/type are compact selects; period and amount are
@@ -212,11 +219,12 @@ function subToolbarMarkup() {
   const val = (name: string) => clean(state.filters[name] ?? "");
   const date = (name: string) => clean(formatFilterDate(state.filters[name] ?? ""));
   const datePicker = (name: "dateFrom" | "dateTo", label: string) => `<div class="relative flex min-w-0 items-center"><input type="text" data-date-display="${name}" value="${date(name)}" class="toolbar-bare w-[5.5rem] sm:w-[6.25rem]" inputmode="numeric" pattern="\\d{2}/\\d{2}/\\d{4}" placeholder="DD/MM/YYYY" aria-label="${label}" /><input type="date" data-date-picker="${name}" value="${val(name)}" class="toolbar-native-date" tabindex="-1" aria-hidden="true" /><button type="button" class="date-picker flex h-6 w-5 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100" data-date-picker-button="${name}" title="Choose ${label.toLowerCase()}" aria-label="Choose ${label.toLowerCase()}">${icon("calendar")}</button></div>`;
-  const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-8" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
+  const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-9" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
+  const loyalty = `<input class="toolbar-field w-44" name="loyaltyCard" value="${val("loyaltyCard")}" placeholder="Loyalty card number" aria-label="Loyalty card number" />`;
   const period = `<div class="toolbar-group">${datePicker("dateFrom", "From date")}<span class="text-slate-500">–</span>${datePicker("dateTo", "To date")}</div>`;
   const amount = `<div class="toolbar-group"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Max amount" /></div>`;
-  const actions = `<div class="flex shrink-0 items-center gap-1.5"><button type="reset" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-pine px-3 text-xs font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
-  return `<div class="sticky top-10 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-1.5 px-3 py-2">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${period}${amount}${actions}</form></div>`;
+  const actions = `<div class="flex shrink-0 items-center gap-2"><button type="reset" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-11 shrink-0 items-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
+  return `<div class="sticky top-14 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-2 px-4 py-3">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${paymentTypeSelect()}${loyalty}${period}${amount}${actions}</form></div>`;
 }
 
 // --- transactions view ------------------------------------------------------
@@ -472,7 +480,7 @@ function defaultFilterDates() {
 
 function readUrl() {
   const query = new URLSearchParams(location.search);
-  for (const key of ["store", "terminal", "operator", "type", "dateFrom", "dateTo", "minAmount", "maxAmount", "search"]) {
+  for (const key of ["store", "terminal", "operator", "type", "paymentTypes", "loyaltyCard", "dateFrom", "dateTo", "minAmount", "maxAmount", "search"]) {
     const value = query.get(key);
     if (value) state.filters[key] = value;
   }
@@ -488,8 +496,11 @@ function syncFilters() {
   const form = document.querySelector<HTMLFormElement>("#filters");
   if (!form) return;
   for (const [key, value] of new FormData(form).entries()) {
-    state.filters[key] = key === "dateFrom" || key === "dateTo" ? parseFilterDate(String(value)) : String(value);
+    if (key !== "paymentType") state.filters[key] = key === "dateFrom" || key === "dateTo" ? parseFilterDate(String(value)) : String(value);
   }
+  const paymentTypes = new FormData(form).getAll("paymentType").map(String);
+  if (paymentTypes.length) state.filters.paymentTypes = paymentTypes.join(",");
+  else delete state.filters.paymentTypes;
   form.querySelectorAll<HTMLInputElement>("[data-date-display]").forEach((input) => {
     state.filters[input.dataset.dateDisplay!] = parseFilterDate(input.value);
   });
@@ -618,7 +629,17 @@ function bindEvents() {
     loadView();
   }));
   const filters = document.querySelector<HTMLFormElement>("#filters");
-  filters?.addEventListener("input", (event) => { const target = event.target as HTMLInputElement; if (target.name) state.filters[target.name] = target.value; });
+  filters?.addEventListener("input", (event) => {
+    const target = event.target as HTMLInputElement;
+    if (!target.name) return;
+    if (target.name === "paymentType") {
+      const selected = Array.from(filters.querySelectorAll<HTMLInputElement>('input[name="paymentType"]:checked')).map((input) => input.value);
+      if (selected.length) state.filters.paymentTypes = selected.join(",");
+      else delete state.filters.paymentTypes;
+      return;
+    }
+    state.filters[target.name] = target.value;
+  });
   document.querySelectorAll<HTMLButtonElement>(".date-picker").forEach((button) => button.addEventListener("click", () => {
     const picker = document.querySelector<HTMLInputElement>(`[data-date-picker="${button.dataset.datePickerButton}"]`);
     if (picker?.showPicker) picker.showPicker();

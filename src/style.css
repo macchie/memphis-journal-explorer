@@ -40,17 +40,17 @@
    input, `pr-8` on the filter selects) reliably override the base padding baked into `.control`. */
 @layer components {
   .icon { @apply h-[1.05rem] w-[1.05rem] fill-none stroke-current; stroke-width: 1.8; }
-  .control { @apply h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-ink outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-pine focus:ring-2 focus:ring-pine/15; }
+  .control { @apply h-12 w-full rounded-md border border-slate-200 bg-white px-3 text-base text-ink outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-pine focus:ring-2 focus:ring-pine/15; }
   .label { @apply mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500; }
   /* Compact dark controls used across the filter sub-toolbar. */
-  .toolbar-field { @apply h-8 rounded-md border border-slate-700 bg-slate-800/70 px-2 text-xs text-slate-100 outline-none transition placeholder:text-slate-500 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30; }
-  .toolbar-group { @apply flex h-8 shrink-0 items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 text-xs text-slate-100 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30 hover:border-slate-600; }
+  .toolbar-field { @apply h-11 rounded-md border border-slate-700 bg-slate-800/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30; }
+  .toolbar-group { @apply flex h-11 shrink-0 items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-3 text-sm text-slate-100 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30 hover:border-slate-600; }
   .toolbar-bare { @apply min-w-0 border-0 bg-transparent p-0 text-slate-100 outline-none placeholder:text-slate-500 focus:ring-0; }
   .drawer { @apply fixed inset-y-0 right-0 z-30 w-full max-w-[640px] overflow-y-auto bg-[#fcfdfd] shadow-2xl; animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); scrollbar-gutter: stable; }
 }
 .toolbar-native-date { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .toolbar-search { flex: 1 1 14rem; }
-.toolbar-select { flex: 0 1 7rem; width: 7rem; }
+.toolbar-select { flex: 0 1 8rem; width: 8rem; }
 
 @media (max-width: 639px) {
   .toolbar-search { flex-basis: 100%; }
@@ -75,6 +75,7 @@
 .app-titlebar {
   user-select: none;
   -webkit-user-select: none;
+  min-height: 3.5rem;
 }
 
 @media (max-width: 760px) {
