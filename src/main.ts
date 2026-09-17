@@ -1,4 +1,5 @@
 import "./style.css";
+import JsBarcode from "jsbarcode";
 
 type Transaction = {
   dt_time_stamp_st: string;
@@ -22,6 +23,7 @@ type Flagged = Transaction & { reasons: string[]; score: number };
 type Operator = { operator: string; txns: number; voids: number; refunds: number; voidRate: number; risk: number };
 type Exceptions = { flagged: Flagged[]; operators: Operator[] };
 type View = "transactions" | "exceptions";
+type DateFilterName = "dateFrom" | "dateTo";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const state = {
@@ -39,9 +41,11 @@ const state = {
   detailError: false,
   drawerTab: "detail" as "detail" | "receipt",
   pendingSel: null as string | null,
+  calendarMonths: {} as Partial<Record<DateFilterName, string>>,
+  calendarOpen: null as DateFilterName | null,
 };
 
-const remoteServer = import.meta.env.VITE_REMOTE_LOOKUP_SERVER ?? window.location.hostname != "localhost" ? window.location.hostname : "142.132.232.189";
+const remoteServer = import.meta.env.VITE_REMOTE_LOOKUP_SERVER ?? !["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.hostname : "142.132.232.189";
 const remoteLookupUrl = `http://${remoteServer.includes(":") ? remoteServer : `${remoteServer}:7392`}/api/db-operations/remote-lookup`;
 type Filters = Record<string, string | undefined>;
 type Row = Record<string, string | number | boolean | null | unknown[]>;
@@ -224,16 +228,33 @@ function paymentTypeSelect() {
 // sticky dark secondary bar under the app title bar. All controls sit on a single non-wrapping row —
 // search flexes/shrinks; store/terminal/operator/type are compact selects; period and amount are
 // grouped range controls; Clear (icon-only) and Apply sit on the right.
+function dateCalendarMarkup(name: DateFilterName, label: string) {
+  const selected = state.filters[name] ?? currentLocalDate();
+  const visibleMonth = state.calendarMonths[name] ?? selected;
+  const [year, month] = visibleMonth.slice(0, 7).split("-").map(Number);
+  const monthStart = new Date(year, month - 1, 1);
+  const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(monthStart);
+  const firstDay = (monthStart.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const day = index - firstDay + 1;
+    if (day < 1 || day > daysInMonth) return `<span></span>`;
+    const value = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const selectedClass = value === state.filters[name] ? "bg-pine text-white" : "text-slate-200 hover:bg-slate-700";
+    return `<button type="button" class="calendar-day flex h-8 w-8 items-center justify-center rounded text-xs font-medium ${selectedClass}" data-date-name="${name}" data-date-value="${value}">${day}</button>`;
+  }).join("");
+  const display = clean(formatFilterDate(state.filters[name] ?? ""));
+  return `<div class="relative flex min-w-0 items-center"><input type="text" data-date-display="${name}" value="${display}" class="toolbar-bare w-[5.5rem] sm:w-[6.25rem] lg:w-[4.4rem]" inputmode="numeric" pattern="\\d{2}/\\d{2}/\\d{4}" placeholder="DD/MM/YYYY" aria-label="${label}" /><button type="button" class="date-picker flex h-6 w-5 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100" data-date-picker-button="${name}" title="Choose ${label.toLowerCase()}" aria-label="Choose ${label.toLowerCase()}" aria-expanded="${state.calendarOpen === name}">${icon("calendar")}</button><div class="date-calendar absolute left-0 top-full z-40 mt-2 ${state.calendarOpen === name ? "" : "hidden "}w-72 rounded-md border border-slate-700 bg-slate-800 p-3 shadow-xl" data-date-calendar="${name}"><div class="mb-2 flex items-center justify-between"><button type="button" class="calendar-month flex h-8 w-8 rotate-180 items-center justify-center rounded text-slate-300 hover:bg-slate-700" data-date-month="${name}" data-direction="previous" aria-label="Previous month">${icon("chevron")}</button><span class="text-sm font-semibold text-white">${monthLabel}</span><button type="button" class="calendar-month flex h-8 w-8 items-center justify-center rounded text-slate-300 hover:bg-slate-700" data-date-month="${name}" data-direction="next" aria-label="Next month">${icon("chevron")}</button></div><div class="grid grid-cols-7 place-items-center gap-1 text-[10px] font-bold uppercase text-slate-500"><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span></div><div class="mt-1 grid grid-cols-7 place-items-center gap-1">${days}</div></div></div>`;
+}
+
 function subToolbarMarkup() {
   const val = (name: string) => clean(state.filters[name] ?? "");
-  const date = (name: string) => clean(formatFilterDate(state.filters[name] ?? ""));
-  const datePicker = (name: "dateFrom" | "dateTo", label: string) => `<div class="relative flex min-w-0 items-center"><input type="text" data-date-display="${name}" value="${date(name)}" class="toolbar-bare w-[5.5rem] sm:w-[6.25rem]" inputmode="numeric" pattern="\\d{2}/\\d{2}/\\d{4}" placeholder="DD/MM/YYYY" aria-label="${label}" /><input type="date" data-date-picker="${name}" value="${val(name)}" class="toolbar-native-date" tabindex="-1" aria-hidden="true" /><button type="button" class="date-picker flex h-6 w-5 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100" data-date-picker-button="${name}" title="Choose ${label.toLowerCase()}" aria-label="Choose ${label.toLowerCase()}">${icon("calendar")}</button></div>`;
   const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-9" name="search" value="${val("search")}" placeholder="Search article, transaction…" aria-label="Search" /></div>`;
-  const loyalty = `<input class="toolbar-field w-44" name="loyaltyCard" value="${val("loyaltyCard")}" placeholder="Loyalty card number" aria-label="Loyalty card number" />`;
-  const period = `<div class="toolbar-group">${datePicker("dateFrom", "From date")}<span class="text-slate-500">–</span>${datePicker("dateTo", "To date")}</div>`;
-  const amount = `<div class="toolbar-group"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Max amount" /></div>`;
-  const actions = `<div class="flex shrink-0 items-center gap-2"><button type="reset" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-11 shrink-0 items-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
-  return `<div class="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-2 px-4 py-3">${search}<div class="hidden">${tbSelect("store", "All stores", state.facets?.stores)}</div><div class="hidden">${tbSelect("terminal", "All terminals", state.facets?.terminals)}</div><div class="hidden">${tbSelect("operator", "All operators", state.facets?.operators)}</div>${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${paymentTypeSelect()}${loyalty}${period}${amount}${actions}</form></div>`;
+  const loyalty = `<input class="toolbar-field w-44 lg:w-28" name="loyaltyCard" value="${val("loyaltyCard")}" inputmode="numeric" placeholder="Loyalty card number" aria-label="Loyalty card number" />`;
+  const period = `<div class="toolbar-group">${dateCalendarMarkup("dateFrom", "From date")}<span class="text-slate-500">–</span>${dateCalendarMarkup("dateTo", "To date")}</div>`;
+  const amount = `<div class="toolbar-group lg:px-2"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 lg:w-9 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 lg:w-9 tabular-nums" aria-label="Max amount" /></div>`;
+  const actions = `<div class="flex shrink-0 items-center gap-2 lg:gap-1"><button type="reset" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-11 shrink-0 items-center gap-2 rounded-md bg-pine px-4 lg:gap-1 lg:px-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
+  return `<div class="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-2 px-4 py-3 lg:flex-nowrap lg:gap-1 lg:px-2">${search}<div class="hidden">${tbSelect("store", "All stores", state.facets?.stores)}</div><div class="hidden">${tbSelect("terminal", "All terminals", state.facets?.terminals)}</div><div class="hidden">${tbSelect("operator", "All operators", state.facets?.operators)}</div>${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${paymentTypeSelect()}${loyalty}${period}${amount}${actions}</form></div>`;
 }
 
 // --- transactions view ------------------------------------------------------
@@ -398,6 +419,12 @@ function detailSectionsMarkup() {
 // The original POS-printed receipt from rdb_log_receipt: each line's `val` is already column-aligned,
 // so render them verbatim in a monospace <pre>. Collapse the doubled apostrophes left by the source
 // escaping (e.g. d''article).
+function barcodeMarkup(value: string) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  JsBarcode(svg, value, { format: "CODE128", displayValue: true, fontSize: 14, height: 44, margin: 0 });
+  return svg.outerHTML;
+}
+
 function receiptMarkup() {
   const lines = state.details?.receipt ?? [];
   if (!lines.length) return `<div class="py-12 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-slate-400"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#inbox" /></svg><p class="text-sm font-medium text-slate-500">No printed receipt was recorded for this transaction.</p></div></div>`;
@@ -407,23 +434,30 @@ function receiptMarkup() {
   // receipts stay a tidy narrow slip) and shrinks only when a line would otherwise overflow. The 0.6
   // factor approximates the monospace character advance; px-5 padding (2.5rem) is subtracted first.
   const width = Math.max(1, ...rows.map((r) => r.length));
-  const font = `min(11px, calc((100cqw - 2.9rem) / ${width} / 0.6))`;
-  const paper = `<div style="container-type:inline-size"><pre id="receipt" style="font-size:${font}" class="mx-auto w-max max-w-full whitespace-pre rounded-lg border border-slate-200 bg-white px-5 py-6 font-mono leading-[1.45] text-slate-800 shadow-sm">${rows.map(clean).join("\n")}</pre></div>`;
-  return `${paper}<button class="print-receipt mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>`;
+  const font = `min(14px, calc((100cqw - 2.9rem) / ${width} / 0.6))`;
+  const content = rows.map((row) => {
+    const barcode = row.match(/^-\s*Barcode:\s*([0-9]+)\s*--\s*Tipo:\s*\d+\s*$/i);
+    return barcode ? `<div class="my-2 flex justify-center">${barcodeMarkup(barcode[1])}</div>` : clean(row);
+  }).join("\n");
+  const paper = `<div style="container-type:inline-size"><div id="receipt" style="font-size:${font}" class="mx-auto w-max max-w-full whitespace-pre rounded-lg border border-slate-200 bg-white px-5 py-6 font-mono leading-[1.45] text-slate-800 shadow-sm">${content}</div></div>`;
+  return `<button class="print-receipt mb-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>${paper}`;
 }
 
 function drawerBodyMarkup() {
   if (state.detailError) return `<div class="flex flex-col items-center gap-2 py-12 text-center text-clay"><svg class="h-7 w-7 fill-none stroke-current" style="stroke-width:1.6"><use href="#alert" /></svg><p class="text-sm font-semibold">Unable to load transaction details.</p></div>`;
   if (!state.details) return `<div class="space-y-6">${Array.from({ length: 3 }, () => `<div><div class="mb-2 h-3.5 w-24 rounded bg-slate-100"></div><div class="space-y-2 border-y border-slate-100 py-3">${Array.from({ length: 2 }, () => `<div class="h-3.5 rounded bg-slate-100"></div>`).join("")}</div></div>`).join("")}</div>`;
-  const tab = (id: "detail" | "receipt", label: string) => `<button class="drawer-tab flex-1 rounded px-3 py-1.5 font-medium transition ${state.drawerTab === id ? "bg-white text-ink shadow-sm" : "text-slate-500 hover:text-ink"}" data-tab="${id}">${label}</button>`;
-  const tabs = `<div class="mb-5 flex gap-1 rounded-md bg-slate-100 p-1 text-sm">${tab("detail", "Detail")}${tab("receipt", "Receipt")}</div>`;
-  return `${tabs}${state.drawerTab === "receipt" ? receiptMarkup() : detailSectionsMarkup()}`;
+  if (state.drawerTab === "receipt") return receiptMarkup();
+  const row = state.selected!;
+  const summary = `<div class="mb-6 grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p class="text-xs text-slate-500">Total</p><p class="mt-1 text-xl font-semibold ${isVoided(row) ? "text-slate-400 line-through decoration-red-400" : ""}">${formatMoney(row.n2_amount_price)}</p>${isVoided(row) ? `<p class="text-[11px] font-semibold uppercase tracking-wide text-red-600">Voided · not counted</p>` : ""}</div><div><p class="text-xs text-slate-500">Operator</p><p class="mt-1 text-xl font-semibold">${clean(row.sz_employee_no)}</p></div></div>`;
+  return `${summary}${detailSectionsMarkup()}`;
 }
 
 function drawerMarkup() {
   if (!state.selected) return "";
   const row = state.selected;
-  return `<div class="fixed inset-0 z-20 bg-ink/25" data-close></div><aside class="drawer"><header class="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">Transaction detail</p><h2 class="mt-1 flex items-center font-display text-2xl font-semibold">#${clean(row.n0_xact_no)}${isVoided(row) ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</h2><p class="mt-1 text-sm text-slate-500">Store ${clean(row.n0_unique_str_no)} · Terminal ${clean(row.n0_terminal_no)} · ${formatDate(row.dt_time_stamp_st)}</p></div><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close aria-label="Close details">${icon("close")}</button></header><div class="p-6"><div class="mb-6 grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p class="text-xs text-slate-500">Total</p><p class="mt-1 text-xl font-semibold ${isVoided(row) ? "text-slate-400 line-through decoration-red-400" : ""}">${formatMoney(row.n2_amount_price)}</p>${isVoided(row) ? `<p class="text-[11px] font-semibold uppercase tracking-wide text-red-600">Voided · not counted</p>` : ""}</div><div><p class="text-xs text-slate-500">Operator</p><p class="mt-1 text-xl font-semibold">${clean(row.sz_employee_no)}</p></div></div><div id="drawer-detail">${drawerBodyMarkup()}</div></div></aside>`;
+  const tab = (id: "detail" | "receipt", label: string) => `<button class="drawer-tab flex-1 rounded px-3 py-1.5 font-medium transition ${state.drawerTab === id ? "bg-white text-ink shadow-sm" : "text-slate-500 hover:text-ink"}" data-tab="${id}">${label}</button>`;
+  const tabs = `<div class="mb-5 flex gap-1 rounded-md bg-slate-100 p-1 text-sm">${tab("receipt", "Receipt")}${tab("detail", "Detail")}</div>`;
+  return `<div class="fixed inset-0 z-20 bg-ink/25" data-close></div><aside class="drawer"><header class="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5"><div><p class="text-xs font-bold uppercase tracking-[0.12em] text-pine">Transaction detail</p><h2 class="mt-1 flex items-center font-display text-2xl font-semibold">#${clean(row.n0_xact_no)}${isVoided(row) ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}</h2><p class="mt-1 text-sm text-slate-500">Store ${clean(row.n0_unique_str_no)} · Terminal ${clean(row.n0_terminal_no)} · ${formatDate(row.dt_time_stamp_st)}</p></div><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close aria-label="Close details">${icon("close")}</button></header><div class="p-6">${tabs}<div id="drawer-detail">${drawerBodyMarkup()}</div></div></aside>`;
 }
 
 // --- render + state sync ----------------------------------------------------
@@ -434,7 +468,7 @@ function render() {
   document.documentElement.classList.toggle("scroll-locked", scrollLocked);
   app.classList.toggle("scroll-locked", scrollLocked);
   const content = state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
-  app.innerHTML = `<div class="hidden">${toolbarMarkup()}</div>${subToolbarMarkup()}<div class="app-content"><main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${content}</main></div>${drawerMarkup()}`;
+  app.innerHTML = `<div class="hidden">${toolbarMarkup()}</div>${subToolbarMarkup()}<div class="app-content"><main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${content}</main></div>${drawerMarkup()}`;
   syncUrl();
   bindEvents();
 }
@@ -683,16 +717,35 @@ function bindEvents() {
     }
     state.filters[target.name] = target.value;
   });
-  document.querySelectorAll<HTMLButtonElement>(".date-picker").forEach((button) => button.addEventListener("click", () => {
-    const picker = document.querySelector<HTMLInputElement>(`[data-date-picker="${button.dataset.datePickerButton}"]`);
-    if (picker?.showPicker) picker.showPicker();
-    else { picker?.focus(); picker?.click(); }
+  document.querySelectorAll<HTMLInputElement>("[data-date-display]").forEach((input) => input.addEventListener("input", () => {
+    const name = input.dataset.dateDisplay as DateFilterName;
+    const value = parseFilterDate(input.value);
+    if (value) { state.filters[name] = value; state.calendarMonths[name] = value; }
   }));
-  document.querySelectorAll<HTMLInputElement>("[data-date-picker]").forEach((picker) => picker.addEventListener("change", () => {
-    const name = picker.dataset.datePicker!;
-    const display = document.querySelector<HTMLInputElement>(`[data-date-display="${name}"]`);
-    if (display) display.value = formatFilterDate(picker.value);
-    state.filters[name] = picker.value;
+  document.querySelectorAll<HTMLButtonElement>(".date-picker").forEach((button) => button.addEventListener("click", () => {
+    const calendar = document.querySelector<HTMLElement>(`[data-date-calendar="${button.dataset.datePickerButton}"]`);
+    const isOpen = !calendar?.classList.contains("hidden");
+    document.querySelectorAll<HTMLElement>(".date-calendar").forEach((element) => element.classList.add("hidden"));
+    document.querySelectorAll<HTMLButtonElement>(".date-picker").forEach((element) => element.setAttribute("aria-expanded", "false"));
+    state.calendarOpen = isOpen ? null : button.dataset.datePickerButton as DateFilterName;
+    if (calendar && !isOpen) { calendar.classList.remove("hidden"); button.setAttribute("aria-expanded", "true"); }
+  }));
+  document.querySelectorAll<HTMLButtonElement>(".calendar-month").forEach((button) => button.addEventListener("click", () => {
+    const name = button.dataset.dateMonth as DateFilterName;
+    const value = state.calendarMonths[name] ?? state.filters[name] ?? currentLocalDate();
+    const month = new Date(`${value.slice(0, 7)}-01T00:00:00`);
+    month.setMonth(month.getMonth() + (button.dataset.direction === "next" ? 1 : -1));
+    state.calendarMonths[name] = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-01`;
+    state.calendarOpen = name;
+    render();
+  }));
+  document.querySelectorAll<HTMLButtonElement>(".calendar-day").forEach((button) => button.addEventListener("click", () => {
+    const name = button.dataset.dateName as DateFilterName;
+    const value = button.dataset.dateValue!;
+    state.filters[name] = value;
+    state.calendarMonths[name] = value;
+    state.calendarOpen = null;
+    render();
   }));
   filters?.addEventListener("submit", (event) => { event.preventDefault(); syncFilters(); state.range = null; state.page = 1; loadView(); });
   filters?.addEventListener("reset", (event) => { event.preventDefault(); state.filters = {}; defaultFilterDates(); state.range = null; state.page = 1; loadView(); });
