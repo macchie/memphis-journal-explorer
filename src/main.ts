@@ -22,7 +22,6 @@ type Flagged = Transaction & { reasons: string[]; score: number };
 type Operator = { operator: string; txns: number; voids: number; refunds: number; voidRate: number; risk: number };
 type Exceptions = { flagged: Flagged[]; operators: Operator[] };
 type View = "transactions" | "exceptions";
-type Server = { id: string; name: string; address: string };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const state = {
@@ -40,104 +39,136 @@ const state = {
   detailError: false,
   drawerTab: "detail" as "detail" | "receipt",
   pendingSel: null as string | null,
-  servers: [] as Server[],
-  selectedServerId: null as string | null,
-  serversReady: false,
-  manageOpen: false,
-  editingId: null as string | null,
 };
 
-// In the browser the API is same-origin (Vite proxies /api); inside the Tauri desktop shell the UI is
-// served from tauri:// and talks to the bundled Bun sidecar on localhost:3000.
-type TauriWindow = Window & { __TAURI_INTERNALS__?: { invoke?: unknown; metadata?: { currentWindow?: unknown } }; __TAURI__?: unknown; __TAURI_IPC__?: unknown };
-const tauriWindow = window as TauriWindow;
-// `getCurrentWindow()` requires the Tauri IPC bridge. A Vite server can be shared by a regular
-// browser during desktop development, so do not expose native controls based on a build flag alone.
-const IN_TAURI = typeof tauriWindow.__TAURI_INTERNALS__?.invoke === "function" && Boolean(tauriWindow.__TAURI_INTERNALS__?.metadata?.currentWindow);
-const API_BASE = IN_TAURI ? "http://localhost:3000" : "";
-const api = (path: string) => `${API_BASE}${path}`;
-async function apiFetch(path: string, init?: RequestInit) {
-  const attempts = IN_TAURI ? 10 : 1; // tolerate the sidecar still booting on desktop cold start
-  let lastError: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try { return await fetch(api(path), init); }
-    catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 400)); }
+const remoteServer = import.meta.env.VITE_REMOTE_LOOKUP_SERVER ?? window.location.hostname != "localhost" ? window.location.hostname : "142.132.232.189";
+const remoteLookupUrl = `http://${remoteServer.includes(":") ? remoteServer : `${remoteServer}:7392`}/api/db-operations/remote-lookup`;
+type Filters = Record<string, string | undefined>;
+type Row = Record<string, string | number | boolean | null | unknown[]>;
+
+const escapeLiteral = (value: string) => value.replaceAll("'", "''");
+const isInteger = (value: string | undefined) => Boolean(value && /^\d+$/.test(value));
+const isNumber = (value: string | undefined) => Boolean(value && /^-?\d+(\.\d+)?$/.test(value));
+const num = (value: unknown) => Number(value ?? 0);
+
+async function remoteQuery(query: string): Promise<Row[]> {
+  let response: Response;
+  try {
+    response = await fetch(remoteLookupUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request: { command: 1003, query } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${remoteServer}`);
   }
-  throw lastError;
+  if (!response.ok) throw new Error(`Remote database returned ${response.status}`);
+  const result = (await response.text()).trim();
+  if (!result || result.startsWith("NO DATA") || result.startsWith("NO RECORD FOUND")) return [];
+  if (result.startsWith("SQL ERROR")) throw new Error("Query rejected by remote database");
+  return JSON.parse(result) as Row[];
 }
 
-// --- server list persistence ------------------------------------------------
-// Desktop: stored in a JSON file in the OS config dir via Tauri commands. Browser: localStorage fallback.
-const SERVER_ADDRESS = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/;
-const STORE_KEY = "rdblog.servers";
-type StoredConfig = { servers: Server[]; selectedId: string | null };
-const invoke = (cmd: string, args?: Record<string, unknown>) => (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } } }).__TAURI__.core.invoke(cmd, args);
+const DISCOUNT_TOTAL = "COALESCE((SELECT SUM(COALESCE(d.n2_allowance, 0) + COALESCE(d.n2_perc_off_amount, 0)) FROM public.rdb_log_discount d WHERE d.dt_time_stamp = h.dt_time_stamp_st AND d.n0_unique_str_no = h.n0_unique_str_no AND d.n0_terminal_no = h.n0_terminal_no AND d.n0_xact_no = h.n0_xact_no AND COALESCE(d.bl_voided, 0) <> 1), 0)";
+const SORT_COLUMNS: Record<string, string> = { date: "h.dt_time_stamp_st", amount: "h.n2_amount_price", store: "h.n0_unique_str_no", terminal: "h.n0_terminal_no", operator: "h.n0_operator_no", discount: "discount_total" };
 
-async function loadServerConfig(): Promise<StoredConfig> {
-  try {
-    const raw = IN_TAURI ? (await invoke("load_servers") as string) : localStorage.getItem(STORE_KEY);
-    const parsed = raw ? JSON.parse(raw) as StoredConfig : null;
-    if (parsed && Array.isArray(parsed.servers)) return { servers: parsed.servers, selectedId: parsed.selectedId ?? null };
-  } catch { /* fall through to empty */ }
-  return { servers: [], selectedId: null };
-}
-
-async function saveServerConfig() {
-  const raw = JSON.stringify({ servers: state.servers, selectedId: state.selectedServerId });
-  try {
-    if (IN_TAURI) await invoke("save_servers", { data: raw });
-    else localStorage.setItem(STORE_KEY, raw);
-  } catch { /* best effort */ }
-}
-
-const selectedServer = () => state.servers.find((s) => s.id === state.selectedServerId) ?? null;
-
-// Point the backend at the chosen remote host before running any queries.
-async function activateServer(address: string) {
-  try {
-    await apiFetch("/api/server", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
-  } catch { /* the backend may be booting; subsequent queries surface the error */ }
-}
-
-async function connectTo(id: string | null) {
-  state.selectedServerId = id;
-  state.facets = null;
-  await saveServerConfig();
-  const server = selectedServer();
-  render();
-  if (!server) return;
-  await activateServer(server.address);
-  loadFacets();
-  loadView();
-}
-
-async function addServer(name: string, address: string) {
-  const server: Server = { id: crypto.randomUUID(), name: name.trim(), address: address.trim() };
-  state.servers.push(server);
-  await saveServerConfig();
-  return server;
-}
-
-async function updateServer(id: string, name: string, address: string) {
-  const server = state.servers.find((s) => s.id === id);
-  if (!server) return;
-  server.name = name.trim();
-  server.address = address.trim();
-  state.editingId = null;
-  await saveServerConfig();
-  if (state.selectedServerId === id) await activateServer(server.address);
-  render();
-}
-
-async function deleteServer(id: string) {
-  state.servers = state.servers.filter((s) => s.id !== id);
-  if (state.editingId === id) state.editingId = null;
-  if (state.selectedServerId === id) {
-    await connectTo(state.servers[0]?.id ?? null);
-    return;
+function transactionWhere(filters: Filters) {
+  const clauses = ["h.n0_trans_type = 0", "h.bl_suspended = 0", "h.bl_training = 0"];
+  if (isInteger(filters.store)) clauses.push(`h.n0_unique_str_no = ${filters.store}`);
+  if (isInteger(filters.terminal)) clauses.push(`h.n0_terminal_no = ${filters.terminal}`);
+  if (isInteger(filters.operator)) clauses.push(`h.n0_operator_no = ${filters.operator}`);
+  if (filters.type === "voided") clauses.push("COALESCE(h.bl_voided, 0) = 1");
+  else if (filters.type === "refund") clauses.push("COALESCE(h.bl_refund, 0) = 1");
+  else if (filters.type === "sale") clauses.push("COALESCE(h.bl_refund, 0) <> 1 AND COALESCE(h.bl_voided, 0) <> 1");
+  if (filters.dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(filters.dateFrom)) clauses.push(`h.dt_time_stamp_st >= '${filters.dateFrom}'::date`);
+  if (filters.dateTo && /^\d{4}-\d{2}-\d{2}$/.test(filters.dateTo)) clauses.push(`h.dt_time_stamp_st < ('${filters.dateTo}'::date + interval '1 day')`);
+  if (isNumber(filters.minAmount)) clauses.push(`h.n2_amount_price >= ${Math.round(Number(filters.minAmount) * 100)}`);
+  if (isNumber(filters.maxAmount)) clauses.push(`h.n2_amount_price <= ${Math.round(Number(filters.maxAmount) * 100)}`);
+  const transactionMatch = (table: string) => `${table}.dt_time_stamp = h.dt_time_stamp_st AND ${table}.n0_unique_str_no = h.n0_unique_str_no AND ${table}.n0_terminal_no = h.n0_terminal_no AND ${table}.n0_xact_no = h.n0_xact_no`;
+  const paymentTypes = [...new Set((filters.paymentTypes ?? "").split(",").map((value) => value.trim()).filter(Boolean))];
+  if (paymentTypes.length) clauses.push(`EXISTS (SELECT 1 FROM public.rdb_log_tender t WHERE ${transactionMatch("t")} AND TRIM(COALESCE(t.sz_description, t.sz_tender_type, '')) IN (${paymentTypes.map((value) => `'${escapeLiteral(value)}'`).join(", ")}))`);
+  if (filters.loyaltyCard?.trim()) clauses.push(`EXISTS (SELECT 1 FROM public.rdb_log_cust_account c WHERE ${transactionMatch("c")} AND TRIM(COALESCE(c.sz_customer_no, '')) ILIKE '%${escapeLiteral(filters.loyaltyCard.trim())}%')`);
+  if (filters.search?.trim()) {
+    const term = escapeLiteral(filters.search.trim());
+    clauses.push(`(CAST(h.n0_xact_no AS text) ILIKE '%${term}%' OR CAST(h.n0_unique_str_no AS text) ILIKE '%${term}%' OR EXISTS (SELECT 1 FROM public.rdb_log_item i WHERE i.dt_time_stamp = h.dt_time_stamp_st AND i.n0_unique_str_no = h.n0_unique_str_no AND i.n0_terminal_no = h.n0_terminal_no AND i.n0_xact_no = h.n0_xact_no AND (i.sz_description ILIKE '%${term}%' OR TRIM(i.sz_item_ref_no) ILIKE '%${term}%')))`);
   }
-  await saveServerConfig();
-  render();
+  return clauses.join(" AND ");
+}
+
+const listSelect = (where: string, sort: string, direction: string, limit: number, offset = 0) => `SELECT h.dt_time_stamp_st, h.n0_unique_str_no, h.n0_terminal_no, h.n0_xact_no, h.n0_operator_no, h.n2_amount_price, h.n0_tot_sold_item, h.bl_refund, h.bl_loyalty, h.bl_voided, ${DISCOUNT_TOTAL} AS discount_total FROM public.rdb_log h WHERE ${where} ORDER BY ${sort} ${direction}, h.dt_time_stamp_st DESC LIMIT ${limit} OFFSET ${offset}`;
+
+async function transactionsList(filters: Filters) {
+  const where = transactionWhere(filters);
+  const sort = SORT_COLUMNS[filters.sort ?? "date"] ?? SORT_COLUMNS.date;
+  const direction = filters.direction === "asc" ? "ASC" : "DESC";
+  const page = Math.max(1, Number.parseInt(filters.page ?? "1", 10) || 1);
+  const [rows, summary, discount] = await Promise.all([
+    remoteQuery(listSelect(where, sort, direction, 26, (page - 1) * 25)),
+    remoteQuery(`SELECT count(*) total, COALESCE(SUM(h.n2_amount_price) FILTER (WHERE h.bl_refund <> '1' AND COALESCE(h.bl_voided, 0) <> 1), 0) sales, count(*) FILTER (WHERE h.bl_refund = '1' AND COALESCE(h.bl_voided, 0) <> 1) refunds, count(*) FILTER (WHERE COALESCE(h.bl_voided, 0) = 1) voids FROM public.rdb_log h WHERE ${where}`),
+    remoteQuery(`SELECT COALESCE(SUM(COALESCE(d.n2_allowance, 0) + COALESCE(d.n2_perc_off_amount, 0)), 0) disc FROM public.rdb_log_discount d JOIN public.rdb_log h ON h.dt_time_stamp_st = d.dt_time_stamp AND h.n0_unique_str_no = d.n0_unique_str_no AND h.n0_terminal_no = d.n0_terminal_no AND h.n0_xact_no = d.n0_xact_no WHERE ${where} AND COALESCE(d.bl_voided, 0) <> 1 AND COALESCE(h.bl_voided, 0) <> 1`),
+  ]);
+  return { rows: rows.slice(0, 25), hasMore: rows.length > 25, page, total: num(summary[0]?.total), salesTotal: num(summary[0]?.sales), refundCount: num(summary[0]?.refunds), voidCount: num(summary[0]?.voids), discountTotal: num(discount[0]?.disc) };
+}
+
+async function transactionsCsv(filters: Filters) {
+  const where = transactionWhere(filters);
+  const sort = SORT_COLUMNS[filters.sort ?? "date"] ?? SORT_COLUMNS.date;
+  const direction = filters.direction === "asc" ? "ASC" : "DESC";
+  const rows = await remoteQuery(listSelect(where, sort, direction, 5000));
+  const header = ["Date/time", "Transaction", "Store", "Terminal", "Operator", "Amount", "Discount", "Items", "Refund", "Loyalty", "Voided"];
+  const cell = (value: unknown) => { const text = String(value ?? ""); return /[\",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; };
+  const body = rows.map((row) => [String(row.dt_time_stamp_st ?? "").slice(0, 19).replace("T", " "), row.n0_xact_no, row.n0_unique_str_no, row.n0_terminal_no, row.n0_operator_no, (num(row.n2_amount_price) / 100).toFixed(2), (num(row.discount_total) / 100).toFixed(2), row.n0_tot_sold_item, row.bl_refund === "1" ? "yes" : "no", row.bl_loyalty ? "yes" : "no", num(row.bl_voided) === 1 ? "yes" : "no"].map(cell).join(","));
+  return new Response([header.join(","), ...body].join("\n"), { headers: { "Content-Type": "text/csv; charset=utf-8" } });
+}
+
+async function exceptions(filters: Filters) {
+  const where = transactionWhere(filters);
+  const transactionMatch = (table: string) => `${table}.dt_time_stamp = h.dt_time_stamp_st AND ${table}.n0_unique_str_no = h.n0_unique_str_no AND ${table}.n0_terminal_no = h.n0_terminal_no AND ${table}.n0_xact_no = h.n0_xact_no`;
+  const flagInner = `SELECT h.dt_time_stamp_st, h.n0_unique_str_no store, h.n0_terminal_no term, h.n0_xact_no xact, h.n0_operator_no oper, h.n2_amount_price amount, h.bl_refund, h.bl_voided, h.bl_void_prev, COALESCE(h.n0_tot_itm_voided, 0) item_voids, ${DISCOUNT_TOTAL} AS disc, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND (COALESCE(i.bl_price_req, 0) = 1 OR COALESCE(i.bl_quant_req, 0) = 1)), 0) manual_entries, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND COALESCE(i.bl_return, 0) = 1), 0) item_returns, COALESCE((SELECT COUNT(*) FROM public.rdb_log_item i WHERE ${transactionMatch("i")} AND COALESCE(i.bl_mgr_voided, 0) = 1), 0) manager_voids, COALESCE((SELECT COUNT(*) FROM public.rdb_log_tender t WHERE ${transactionMatch("t")} AND (COALESCE(t.bl_offline, 0) = 1 OR COALESCE(t.bl_denied, 0) = 1 OR COALESCE(t.bl_host_denied, 0) = 1)), 0) tender_issues, COALESCE((SELECT MAX(a.n0_alert_severity) FROM public.rdb_log_alert a WHERE ${transactionMatch("a")}), 0) alert_severity, COALESCE((SELECT COUNT(*) FROM public.rdb_log_cust_account c WHERE ${transactionMatch("c")}), 0) loyalty_changes, COALESCE(EXTRACT(EPOCH FROM (h.dt_time_stamp_end - h.dt_time_stamp_st)), 0) duration_seconds FROM public.rdb_log h WHERE ${where}`;
+  const [candidates, operatorsRaw] = await Promise.all([remoteQuery(`SELECT * FROM (${flagInner}) t WHERE t.bl_refund = '1' OR t.bl_voided = '1' OR t.bl_void_prev = '1' OR t.item_voids > 0 OR t.amount <= 0 OR (t.amount > 0 AND t.disc > t.amount / 2) OR t.manual_entries > 0 OR t.item_returns > 0 OR t.manager_voids > 0 OR t.tender_issues > 0 OR t.alert_severity >= 3 OR t.loyalty_changes > 0 OR t.duration_seconds > 1200 ORDER BY t.dt_time_stamp_st DESC LIMIT 200`), remoteQuery(`SELECT h.n0_operator_no oper, count(*) txns, count(*) FILTER (WHERE h.bl_refund = '1') refunds, count(*) FILTER (WHERE h.bl_voided = '1') voids FROM public.rdb_log h WHERE ${where} GROUP BY 1`)]);
+  const flagged = candidates.map((row) => {
+    const amount = num(row.amount), discount = num(row.disc), itemVoids = num(row.item_voids), manualEntries = num(row.manual_entries), itemReturns = num(row.item_returns), managerVoids = num(row.manager_voids), tenderIssues = num(row.tender_issues), alertSeverity = num(row.alert_severity), loyaltyChanges = num(row.loyalty_changes), durationSeconds = num(row.duration_seconds);
+    const reasons: { label: string; weight: number }[] = [];
+    if (num(row.bl_voided) === 1) reasons.push({ label: "Voided transaction", weight: 40 }); if (num(row.bl_void_prev) === 1) reasons.push({ label: "Voided a previous sale", weight: 35 }); if (num(row.bl_refund) === 1) reasons.push({ label: "Refund", weight: 30 }); if (itemVoids > 0) reasons.push({ label: `${itemVoids} item void${itemVoids > 1 ? "s" : ""}`, weight: 10 + itemVoids * 5 }); if (amount <= 0) reasons.push({ label: "Non-positive amount", weight: 20 }); if (amount > 0 && discount > amount / 2) reasons.push({ label: `Heavy discount (${Math.round((discount / amount) * 100)}%)`, weight: 30 }); if (manualEntries > 0) reasons.push({ label: `${manualEntries} manual item entr${manualEntries > 1 ? "ies" : "y"}`, weight: 10 + manualEntries * 5 }); if (itemReturns > 0) reasons.push({ label: `${itemReturns} returned item${itemReturns > 1 ? "s" : ""}`, weight: 15 + itemReturns * 5 }); if (managerVoids > 0) reasons.push({ label: `${managerVoids} manager item void${managerVoids > 1 ? "s" : ""}`, weight: 25 + managerVoids * 5 }); if (tenderIssues > 0) reasons.push({ label: `${tenderIssues} tender issue${tenderIssues > 1 ? "s" : ""}`, weight: 25 + tenderIssues * 5 }); if (alertSeverity >= 3) reasons.push({ label: `High-severity POS alert (${alertSeverity})`, weight: 15 + alertSeverity * 5 }); if (loyaltyChanges > 0) reasons.push({ label: `${loyaltyChanges} loyalty account change${loyaltyChanges > 1 ? "s" : ""}`, weight: 8 + loyaltyChanges * 2 }); if (durationSeconds > 1200) reasons.push({ label: `Long transaction (${Math.round(durationSeconds / 60)} min)`, weight: 15 });
+    return { dt_time_stamp_st: String(row.dt_time_stamp_st ?? ""), n0_unique_str_no: num(row.store), n0_terminal_no: String(row.term ?? ""), n0_xact_no: num(row.xact), n0_operator_no: String(row.oper ?? ""), n2_amount_price: amount, discount_total: discount, reasons: reasons.map((reason) => reason.label), score: reasons.reduce((sum, reason) => sum + reason.weight, 0) };
+  }).sort((left, right) => right.score - left.score);
+  const operators = operatorsRaw.map((row) => { const txns = num(row.txns), voids = num(row.voids), refunds = num(row.refunds); return { operator: String(row.oper), txns, voids, refunds, voidRate: txns ? voids / txns : 0, risk: txns ? Math.round((voids * 40 + refunds * 30) / txns) : 0 }; }).filter((operator) => operator.txns >= 5).sort((left, right) => right.risk - left.risk).slice(0, 10);
+  return { flagged, operators };
+}
+
+async function transactionDetail(rawKey: string) {
+  const key = JSON.parse(decodeURIComponent(rawKey)) as Record<string, string | number>;
+  const date = String(key.timestamp ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !isInteger(String(key.store)) || !isInteger(String(key.terminal)) || !isInteger(String(key.transaction))) throw new Error("Invalid transaction key");
+  const dayRange = (column: string) => `${column} >= '${date}'::date AND ${column} < '${date}'::date + interval '1 day'`;
+  const keyMatch = `n0_unique_str_no = ${key.store} AND n0_terminal_no = ${key.terminal} AND n0_xact_no = ${key.transaction}`;
+  const notSuspended = `dt_time_stamp NOT IN (SELECT dt_time_stamp_st FROM public.rdb_log WHERE n0_trans_type = 0 AND bl_suspended <> 0 AND ${keyMatch} AND ${dayRange("dt_time_stamp_st")})`;
+  const where = `${dayRange("dt_time_stamp")} AND ${keyMatch} AND ${notSuspended}`;
+  const [items, tenders, discounts, vat, info, loyalty, alerts, receiptRows] = await Promise.all([
+    remoteQuery(`SELECT n0_sequence_no, sz_description, sz_item_ref_no, n0_quantity, n2_amount_price, n2_ext_price, bl_return FROM public.rdb_log_item WHERE ${where} ORDER BY n0_sequence_no`), remoteQuery(`SELECT n0_sequence_no, sz_description, sz_tender_type, n2_amount, sz_auth_number FROM public.rdb_log_tender WHERE ${where} ORDER BY n0_sequence_no`), remoteQuery(`SELECT n0_sequence_no, sz_description, n0_perc_off, (COALESCE(n2_allowance, 0) + COALESCE(n2_perc_off_amount, 0)) AS n2_disc_amount FROM public.rdb_log_discount WHERE ${where} ORDER BY n0_sequence_no`), remoteQuery(`SELECT n0_tax_code, n2_sold_amount, n2_vat_amount, n3_vat_percentage FROM public.rdb_log_vat WHERE ${where} ORDER BY n0_sequence_no`), remoteQuery(`SELECT n0_sequence_no, dt_time_stamp, sz_info_data FROM public.rdb_log_info WHERE ${where} ORDER BY dt_time_stamp, n0_sequence_no`), remoteQuery(`SELECT n0_sequence_no, sz_customer_no, sz_action, sz_entity, sz_entity_descr, n0_entity_value, j_delivery_info, n0_campaign_id, n0_initiative_id FROM public.rdb_log_cust_account WHERE ${where} ORDER BY n0_sequence_no`), remoteQuery(`SELECT dt_time_stamp, n0_alert_severity, sz_alert_code, sz_alert_log, sz_source FROM public.rdb_log_alert WHERE ${where} ORDER BY dt_time_stamp`), remoteQuery(`SELECT j_receipt_line FROM public.rdb_log_receipt WHERE ${where} ORDER BY dt_time_stamp`),
+  ]);
+  return { items, tenders, discounts, vat, info, loyalty, alerts, receipt: receiptRows.flatMap((row) => Array.isArray(row.j_receipt_line) ? row.j_receipt_line : []) };
+}
+
+async function apiFetch(path: string, _init?: RequestInit) {
+  try {
+    const url = new URL(path, window.location.origin);
+    const filters = Object.fromEntries(url.searchParams) as Filters;
+    if (url.pathname === "/api/facets") {
+      const [stores, terminals, operators, paymentTypes] = await Promise.all([remoteQuery("SELECT DISTINCT n0_unique_str_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"), remoteQuery("SELECT DISTINCT n0_terminal_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"), remoteQuery("SELECT DISTINCT n0_operator_no AS value FROM public.rdb_log WHERE n0_trans_type = 0 ORDER BY 1"), remoteQuery("SELECT DISTINCT TRIM(COALESCE(sz_description, sz_tender_type, '')) AS value FROM public.rdb_log_tender WHERE TRIM(COALESCE(sz_description, sz_tender_type, '')) <> '' ORDER BY 1")]);
+      const values = (rows: Row[]) => rows.map((row) => String(row.value));
+      return Response.json({ stores: values(stores), terminals: values(terminals), operators: values(operators), paymentTypes: values(paymentTypes) });
+    }
+    if (url.pathname === "/api/transactions") return Response.json(await transactionsList(filters));
+    if (url.pathname === "/api/transactions.csv") return await transactionsCsv(filters);
+    if (url.pathname === "/api/exceptions") return Response.json(await exceptions(filters));
+    const match = url.pathname.match(/^\/api\/transactions\/(.+)$/);
+    if (match) return Response.json(await transactionDetail(match[1]));
+    return new Response("Not found", { status: 404 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Query failed" }, { status: 502 });
+  }
 }
 
 const formatMoney = (value: unknown) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(Number(value ?? 0) / 100);
@@ -161,32 +192,10 @@ const badge = (label: string, tone: "amber" | "sky" | "red") => `<span class="ml
 const isVoided = (row: Transaction) => row.bl_voided === "1" || row.bl_voided === 1;
 const logo = () => `<svg class="brand-mark h-6 w-6 shrink-0" viewBox="0 0 40 40" aria-label="Sales Explorer logo" role="img"><rect width="40" height="40" rx="9" fill="#3b82f6"/><path d="M11 13.5h18M11 20h18M11 26.5h11" stroke="#eff6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="27" cy="26.5" r="4" fill="#bfdbfe"/><path d="m25.3 26.5 1.15 1.15 2.25-2.35" stroke="#1e3a8a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-function serverSwitcherMarkup() {
-  if (!state.servers.length) return "";
-  const options = state.servers.map((s) => `<option value="${clean(s.id)}" ${s.id === state.selectedServerId ? "selected" : ""}>${clean(s.name)}</option>`).join("");
-  return `<div class="flex items-center gap-1.5"><div class="relative flex items-center"><span class="pointer-events-none absolute left-2 text-slate-400">${icon("server")}</span><select class="server-select h-7 rounded border border-slate-700/60 bg-slate-800/80 pl-7 pr-6 text-xs font-medium text-slate-200 outline-none transition hover:border-slate-600 hover:bg-slate-700/80 focus:border-blue-500 [&>option]:bg-slate-900 [&>option]:text-slate-100" aria-label="Active server">${options}</select></div><button class="manage-servers flex h-7 w-7 items-center justify-center rounded border border-slate-700/60 bg-slate-800/80 text-slate-400 transition hover:bg-slate-700/80 hover:text-slate-200" title="Manage servers" aria-label="Manage servers">${icon("settings")}</button></div>`;
-}
-
 function toolbarMarkup() {
   const tab = (view: View, label: string, ic: string) => `<button class="nav-tab flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition ${state.view === view ? "bg-slate-800 text-white shadow-sm border-b-2 border-blue-500" : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"}" data-view="${view}">${icon(ic)}<span>${label}</span></button>`;
-  const nav = selectedServer() ? `<nav class="titlebar-nav flex shrink-0 gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>` : "";
-  return `<header class="app-titlebar sticky top-0 z-30 flex min-h-10 w-full select-none items-center gap-3 border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div class="titlebar-primary flex min-w-0 items-center gap-3"><div class="flex shrink-0 items-center gap-2">${logo()}<span class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div>${serverSwitcherMarkup()}</div>${nav}</header>`;
-}
-
-function interstitialMarkup() {
-  const existing = state.servers.length
-    ? `<div class="mt-6 border-t border-slate-100 pt-5"><div class="mb-2 flex items-center justify-between"><p class="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Saved servers</p><button class="manage-servers text-xs font-semibold text-pine hover:text-ink">Manage</button></div><div class="space-y-2">${state.servers.map((s) => `<button class="pick-server flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2.5 text-left text-sm transition hover:border-pine hover:bg-mist/50" data-id="${clean(s.id)}"><span class="min-w-0 truncate"><span class="font-semibold text-ink">${clean(s.name)}</span> <span class="text-slate-400">${clean(s.address)}</span></span><span class="text-pine">${icon("chevron")}</span></button>`).join("")}</div></div>`
-    : "";
-  return `<main class="mx-auto flex min-h-[72vh] max-w-lg flex-col justify-center px-5 py-10"><div class="rounded-xl border border-blue-100 bg-white p-8 shadow-panel"><div class="mb-6 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-lg bg-mist text-pine">${icon("server")}</span><div><h1 class="font-display text-2xl font-semibold">Connect a server</h1><p class="text-sm text-slate-500">Add a database server to start exploring transactions.</p></div></div><form id="server-form" class="space-y-3"><label class="block"><span class="label">Server name</span><input class="control" name="name" placeholder="e.g. Production" autocomplete="off" required /></label><label class="block"><span class="label">Server address</span><input class="control" name="address" placeholder="e.g. demo.elvispos.com or 192.168.1.123" autocomplete="off" required /></label><p class="server-error hidden text-xs font-medium text-clay"></p><button class="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("plus")}Add &amp; connect</button></form>${existing}</div></main>`;
-}
-
-function manageModalMarkup() {
-  if (!state.manageOpen) return "";
-  const editing = state.servers.find((s) => s.id === state.editingId) ?? null;
-  const list = state.servers.length
-    ? state.servers.map((s) => `<div class="flex items-center justify-between gap-2 rounded-md border px-3 py-2.5 ${s.id === state.selectedServerId ? "border-pine bg-mist/40" : "border-slate-200"}"><div class="min-w-0"><p class="truncate text-sm font-semibold text-ink">${clean(s.name)}${s.id === state.selectedServerId ? badge("Active", "sky") : ""}</p><p class="truncate text-xs text-slate-500">${clean(s.address)}</p></div><div class="flex shrink-0 gap-1"><button class="edit-server rounded p-1.5 text-slate-500 transition hover:bg-slate-100" data-id="${clean(s.id)}" title="Edit" aria-label="Edit server">${icon("pencil")}</button><button class="delete-server rounded p-1.5 text-clay transition hover:bg-red-50" data-id="${clean(s.id)}" title="Delete" aria-label="Delete server">${icon("trash")}</button></div></div>`).join("")
-    : `<p class="rounded-md border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-400">No servers yet.</p>`;
-  return `<div class="fixed inset-0 z-40 bg-ink/30" data-close-modal></div><div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"><div class="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-2xl"><header class="flex items-center justify-between border-b border-slate-100 px-5 py-4"><h2 class="font-display text-lg font-semibold">Manage servers</h2><button class="rounded p-2 text-slate-500 hover:bg-slate-100" data-close-modal aria-label="Close">${icon("close")}</button></header><div class="max-h-[46vh] space-y-2 overflow-y-auto px-5 py-4">${list}</div><form id="manage-form" class="space-y-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4"><p class="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">${editing ? "Edit server" : "Add server"}</p><label class="block"><span class="label">Name</span><input class="control" name="name" value="${clean(editing?.name ?? "")}" placeholder="Production" autocomplete="off" required /></label><label class="block"><span class="label">Address</span><input class="control" name="address" value="${clean(editing?.address ?? "")}" placeholder="demo.elvispos.com or 192.168.1.123" autocomplete="off" required /></label><p class="server-error hidden text-xs font-medium text-clay"></p><div class="flex gap-2"><button class="flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white transition hover:bg-blue-600">${editing ? "Save changes" : `${icon("plus")}Add server`}</button>${editing ? `<button type="button" class="cancel-edit button-secondary h-10 rounded-md px-3 text-sm font-medium">Cancel</button>` : ""}</div></form></div></div>`;
+  const nav = `<nav class="titlebar-nav ml-auto flex shrink-0 gap-1 rounded-md border border-slate-800/80 bg-slate-900/60 p-0.5">${tab("transactions", "Transactions", "list")}${tab("exceptions", "Exceptions", "alert")}</nav>`;
+  return `<header class="app-titlebar sticky top-0 z-30 flex min-h-10 w-full select-none items-center gap-3 border-b border-slate-800 bg-slate-950 px-3 text-slate-200 shadow-md"><div class="titlebar-primary flex min-w-0 items-center gap-3"><div class="flex shrink-0 items-center gap-2">${logo()}<span class="font-display text-sm font-semibold tracking-tight text-white">Sales Explorer</span></div></div>${nav}</header>`;
 }
 
 function pageHeaderMarkup() {
@@ -219,12 +228,12 @@ function subToolbarMarkup() {
   const val = (name: string) => clean(state.filters[name] ?? "");
   const date = (name: string) => clean(formatFilterDate(state.filters[name] ?? ""));
   const datePicker = (name: "dateFrom" | "dateTo", label: string) => `<div class="relative flex min-w-0 items-center"><input type="text" data-date-display="${name}" value="${date(name)}" class="toolbar-bare w-[5.5rem] sm:w-[6.25rem]" inputmode="numeric" pattern="\\d{2}/\\d{2}/\\d{4}" placeholder="DD/MM/YYYY" aria-label="${label}" /><input type="date" data-date-picker="${name}" value="${val(name)}" class="toolbar-native-date" tabindex="-1" aria-hidden="true" /><button type="button" class="date-picker flex h-6 w-5 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100" data-date-picker-button="${name}" title="Choose ${label.toLowerCase()}" aria-label="Choose ${label.toLowerCase()}">${icon("calendar")}</button></div>`;
-  const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-9" name="search" value="${val("search")}" placeholder="Search article, transaction, store…" aria-label="Search" /></div>`;
+  const search = `<div class="toolbar-search relative min-w-0"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">${icon("search")}</span><input class="toolbar-field w-full pl-9" name="search" value="${val("search")}" placeholder="Search article, transaction…" aria-label="Search" /></div>`;
   const loyalty = `<input class="toolbar-field w-44" name="loyaltyCard" value="${val("loyaltyCard")}" placeholder="Loyalty card number" aria-label="Loyalty card number" />`;
   const period = `<div class="toolbar-group">${datePicker("dateFrom", "From date")}<span class="text-slate-500">–</span>${datePicker("dateTo", "To date")}</div>`;
   const amount = `<div class="toolbar-group"><span class="shrink-0 text-slate-400">€</span><input name="minAmount" inputmode="decimal" placeholder="Min" value="${val("minAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Min amount" /><span class="text-slate-500">–</span><input name="maxAmount" inputmode="decimal" placeholder="Max" value="${val("maxAmount")}" class="toolbar-bare w-12 tabular-nums" aria-label="Max amount" /></div>`;
   const actions = `<div class="flex shrink-0 items-center gap-2"><button type="reset" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-700 hover:text-slate-100" title="Clear filters" aria-label="Clear filters">${icon("close")}</button><button class="flex h-11 shrink-0 items-center gap-2 rounded-md bg-pine px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("sliders")}Apply</button></div>`;
-  return `<div class="sticky top-14 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-2 px-4 py-3">${search}${tbSelect("store", "All stores", state.facets?.stores)}${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${paymentTypeSelect()}${loyalty}${period}${amount}${actions}</form></div>`;
+  return `<div class="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 shadow-sm backdrop-blur" style="color-scheme:dark"><form id="filters" class="flex w-full flex-wrap items-center gap-2 px-4 py-3">${search}<div class="hidden">${tbSelect("store", "All stores", state.facets?.stores)}</div>${tbSelect("terminal", "All terminals", state.facets?.terminals)}${tbSelect("operator", "All operators", state.facets?.operators)}${tbSelect("type", "All types", [["sale", "Sale"], ["refund", "Refund"], ["voided", "Voided"]])}${paymentTypeSelect()}${loyalty}${period}${amount}${actions}</form></div>`;
 }
 
 // --- transactions view ------------------------------------------------------
@@ -240,18 +249,18 @@ function summaryMarkup() {
 function tableMarkup() {
   const sortable = [["date", "Date & time"], ["store", "Store"], ["terminal", "Terminal"], ["operator", "Operator"], ["amount", "Amount"], ["discount", "Discount"]];
   const emptyState = state.error
-    ? `<tr><td colspan="9" class="px-5 py-16 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-clay"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#alert" /></svg><p class="text-sm font-semibold">${clean(state.error)}</p><p class="text-xs text-slate-500">Check the API server and try again.</p></div></td></tr>`
+    ? `<tr><td colspan="9" class="px-5 py-16 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-clay"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#alert" /></svg><p class="text-sm font-semibold">${clean(state.error)}</p><p class="text-xs text-slate-500">Check the remote lookup service and try again.</p></div></td></tr>`
     : `<tr><td colspan="9" class="px-5 py-16 text-center"><div class="mx-auto flex max-w-sm flex-col items-center gap-2 text-slate-400"><svg class="h-8 w-8 fill-none stroke-current" style="stroke-width:1.6"><use href="#inbox" /></svg><p class="text-sm font-medium text-slate-500">No transactions match these filters.</p></div></td></tr>`;
   const discountCell = (row: Transaction) => Number(row.discount_total) > 0 ? `<span class="font-medium text-emerald-600">-${formatMoney(row.discount_total)}</span>` : `<span class="text-slate-300">—</span>`;
   const body = state.loading
     ? Array.from({ length: 8 }, () => `<tr class="border-b border-slate-100 last:border-0">${Array.from({ length: 9 }, () => `<td class="px-5 py-4"><div class="h-3.5 rounded bg-slate-100"></div></td>`).join("")}</tr>`).join("")
     : state.rows.length
-    ? state.rows.map((row) => { const voided = isVoided(row); const cell = (classes: string, content: string, strike = true) => `<td class="${classes} ${voided && strike ? "line-through decoration-red-400" : ""}">${content}</td>`; return `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40 ${voided ? "bg-red-50/40 text-slate-400" : ""}">${cell("whitespace-nowrap px-5 py-4 font-medium", formatDate(row.dt_time_stamp_st))}${cell(`px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : "text-ink"}`, `#${clean(row.n0_xact_no)}`)}${cell("px-5 py-4 tabular-nums", clean(row.n0_unique_str_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_terminal_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_operator_no))}${cell(`whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : Number(row.n2_amount_price) < 0 ? "text-clay" : ""}`, `${formatMoney(row.n2_amount_price)}${voided ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}`)}${cell("whitespace-nowrap px-5 py-4 tabular-nums", discountCell(row))}${cell("px-5 py-4 tabular-nums", clean(row.n0_tot_sold_item))}${cell("px-5 py-4 text-right", `<button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button>`, false)}</tr>`; }).join("")
+    ? state.rows.map((row) => { const voided = isVoided(row); const cell = (classes: string, content: string, strike = true) => `<td class="${classes} ${voided && strike ? "line-through decoration-red-400" : ""}">${content}</td>`; return `<tr class="border-b border-slate-100 last:border-0 hover:bg-mist/40 ${voided ? "bg-red-50/40 text-slate-400" : ""}">${cell("whitespace-nowrap px-5 py-4 font-medium", formatDate(row.dt_time_stamp_st))}${cell(`px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : "text-ink"}`, `#${clean(row.n0_xact_no)}`)}${cell("hidden px-5 py-4 tabular-nums", clean(row.n0_unique_str_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_terminal_no))}${cell("px-5 py-4 tabular-nums", clean(row.n0_operator_no))}${cell(`whitespace-nowrap px-5 py-4 font-semibold tabular-nums ${voided ? "text-slate-400" : Number(row.n2_amount_price) < 0 ? "text-clay" : ""}`, `${formatMoney(row.n2_amount_price)}${voided ? badge("Voided", "red") : ""}${row.bl_refund === "1" ? badge("Refund", "amber") : ""}${row.bl_loyalty ? badge("Loyalty", "sky") : ""}`)}${cell("whitespace-nowrap px-5 py-4 tabular-nums", discountCell(row))}${cell("px-5 py-4 tabular-nums", clean(row.n0_tot_sold_item))}${cell("px-5 py-4 text-right", `<button class="inspect ml-auto flex items-center gap-1 font-bold text-pine hover:text-ink" data-key="${encodeURIComponent(keyOf(row))}">View ${icon("chevron")}</button>`, false)}</tr>`; }).join("")
     : emptyState;
   const from = state.rows.length ? (state.page - 1) * 25 + 1 : 0;
   const to = (state.page - 1) * 25 + state.rows.length;
   const count = state.loading ? "…" : `${from.toLocaleString()}–${to.toLocaleString()} of ${state.summary.total.toLocaleString()}`;
-  return `${summaryMarkup()}<section class="overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="border-b border-blue-100 bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr>${sortable.map(([key, title]) => `<th class="whitespace-nowrap px-5 py-3.5"><button class="sort inline-flex items-center gap-1 transition hover:text-pine ${state.sort === key ? "text-pine" : ""}" data-sort="${key}">${title}<span class="text-[0.7rem]">${state.sort === key ? (state.direction === "asc" ? "↑" : "↓") : ""}</span></button></th>${key === "date" ? `<th class="px-5 py-3.5">Txn #</th>` : ""}`).join("")}<th class="px-5 py-3.5">Items</th><th class="px-5 py-3.5"></th></tr></thead><tbody>${body}</tbody></table></div><footer class="flex items-center justify-between border-t border-blue-100 bg-[#fbfcff] px-5 py-3"><p class="text-sm text-slate-500">Showing ${count}</p><div class="flex gap-2"><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="prev" ${state.page === 1 ? "disabled" : ""}>Previous</button><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="next" ${!state.hasMore ? "disabled" : ""}>Next</button></div></footer></section>`;
+  return `${summaryMarkup()}<section class="overflow-hidden rounded-lg border border-blue-100 bg-white shadow-panel"><div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="border-b border-blue-100 bg-[#f8faff] text-xs font-bold uppercase tracking-[0.07em] text-slate-500"><tr>${sortable.map(([key, title]) => `<th class="${key === "store" ? "hidden " : ""}whitespace-nowrap px-5 py-3.5"><button class="sort inline-flex items-center gap-1 transition hover:text-pine ${state.sort === key ? "text-pine" : ""}" data-sort="${key}">${title}<span class="text-[0.7rem]">${state.sort === key ? (state.direction === "asc" ? "↑" : "↓") : ""}</span></button></th>${key === "date" ? `<th class="px-5 py-3.5">Txn #</th>` : ""}`).join("")}<th class="px-5 py-3.5">Items</th><th class="px-5 py-3.5"></th></tr></thead><tbody>${body}</tbody></table></div><footer class="flex items-center justify-between border-t border-blue-100 bg-[#fbfcff] px-5 py-3"><p class="text-sm text-slate-500">Showing ${count}</p><div class="flex gap-2"><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="prev" ${state.page === 1 ? "disabled" : ""}>Previous</button><button class="page button-secondary rounded px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40" data-direction="next" ${!state.hasMore ? "disabled" : ""}>Next</button></div></footer></section>`;
 }
 
 // --- exceptions view --------------------------------------------------------
@@ -421,17 +430,11 @@ function drawerMarkup() {
 
 function render() {
   // Lock the page behind the drawer/modal so only its scrollbar is active (no double scrollbar).
-  const scrollLocked = Boolean(state.selected || state.manageOpen);
+  const scrollLocked = Boolean(state.selected);
   document.documentElement.classList.toggle("scroll-locked", scrollLocked);
   app.classList.toggle("scroll-locked", scrollLocked);
-  if (!state.serversReady) { app.innerHTML = ""; return; }
-  if (!selectedServer()) {
-    app.innerHTML = `${toolbarMarkup()}<div class="app-content">${interstitialMarkup()}</div>${manageModalMarkup()}`;
-    bindEvents();
-    return;
-  }
   const content = state.view === "exceptions" ? exceptionsMarkup() : tableMarkup();
-  app.innerHTML = `${toolbarMarkup()}${subToolbarMarkup()}<div class="app-content"><main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${content}</main></div>${drawerMarkup()}${manageModalMarkup()}`;
+  app.innerHTML = `<div class="hidden">${toolbarMarkup()}</div>${subToolbarMarkup()}<div class="app-content"><main class="mx-auto max-w-[1500px] px-5 py-7 md:px-8">${pageHeaderMarkup()}${content}</main></div>${drawerMarkup()}`;
   syncUrl();
   bindEvents();
 }
@@ -578,7 +581,7 @@ async function inspectTransaction(key: string) {
   state.selected = findRow(key);
   state.details = null;
   state.detailError = false;
-  state.drawerTab = "detail";
+  state.drawerTab = "receipt";
   render();
   try {
     const result = await apiFetch(`/api/transactions/${key}`);
@@ -659,45 +662,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLElement>("[data-close]").forEach((element) => element.addEventListener("click", closeDrawer));
   document.querySelectorAll<HTMLButtonElement>(".range").forEach((button) => button.addEventListener("click", () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(); from.setDate(to.getDate() - days); state.filters.dateFrom = from.toISOString().slice(0, 10); state.filters.dateTo = to.toISOString().slice(0, 10); state.range = days; state.page = 1; loadView(); }));
   document.querySelector<HTMLButtonElement>(".export-csv")?.addEventListener("click", exportCsv);
-  bindServerEvents();
   bindDrawerBody();
-}
-
-function readServerForm(form: HTMLFormElement): { name: string; address: string } | null {
-  const data = new FormData(form);
-  const name = String(data.get("name") ?? "").trim();
-  const address = String(data.get("address") ?? "").trim();
-  const error = form.querySelector<HTMLElement>(".server-error");
-  const fail = (message: string) => { if (error) { error.textContent = message; error.classList.remove("hidden"); } return null; };
-  if (!name) return fail("Please enter a server name.");
-  if (!SERVER_ADDRESS.test(address)) return fail("Enter a valid host or IP, e.g. demo.elvispos.com or 192.168.1.123");
-  return { name, address };
-}
-
-function bindServerEvents() {
-  document.querySelector<HTMLSelectElement>(".server-select")?.addEventListener("change", (event) => connectTo((event.target as HTMLSelectElement).value));
-  document.querySelectorAll<HTMLButtonElement>(".manage-servers").forEach((button) => button.addEventListener("click", () => { state.manageOpen = true; state.editingId = null; render(); }));
-  document.querySelectorAll<HTMLElement>("[data-close-modal]").forEach((element) => element.addEventListener("click", () => { state.manageOpen = false; state.editingId = null; render(); }));
-  document.querySelectorAll<HTMLButtonElement>(".edit-server").forEach((button) => button.addEventListener("click", () => { state.editingId = button.dataset.id!; render(); }));
-  document.querySelector<HTMLButtonElement>(".cancel-edit")?.addEventListener("click", () => { state.editingId = null; render(); });
-  document.querySelectorAll<HTMLButtonElement>(".delete-server").forEach((button) => button.addEventListener("click", () => deleteServer(button.dataset.id!)));
-  document.querySelectorAll<HTMLButtonElement>(".pick-server").forEach((button) => button.addEventListener("click", () => connectTo(button.dataset.id!)));
-  document.querySelector<HTMLFormElement>("#server-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const values = readServerForm(event.target as HTMLFormElement);
-    if (!values) return;
-    const server = await addServer(values.name, values.address);
-    connectTo(server.id);
-  });
-  document.querySelector<HTMLFormElement>("#manage-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.target as HTMLFormElement;
-    const values = readServerForm(form);
-    if (!values) return;
-    if (state.editingId) { await updateServer(state.editingId, values.name, values.address); return; }
-    await addServer(values.name, values.address);
-    render();
-  });
 }
 
 // Download the filtered result set as CSV via a blob so it works in both the browser and the desktop shell.
@@ -722,14 +687,6 @@ async function exportCsv() {
 
 async function init() {
   readUrl();
-  const config = await loadServerConfig();
-  state.servers = config.servers;
-  state.selectedServerId = config.selectedId && config.servers.some((s) => s.id === config.selectedId) ? config.selectedId : null;
-  state.serversReady = true;
-  render();
-  const server = selectedServer();
-  if (!server) return; // first-run interstitial handles server creation
-  await activateServer(server.address);
   loadFacets();
   loadView().then(() => { if (state.pendingSel) { const key = state.pendingSel; state.pendingSel = null; if (findRow(key)) inspectTransaction(key); } });
 }

@@ -6,16 +6,13 @@
   "author": "",
   "license": "ISC",
   "scripts": {
-    "dev:server": "bun run --watch server/index.ts",
     "dev:web": "vite",
-    "dev": "bun run scripts/dev.ts",
+    "dev": "vite",
     "build": "vite build",
-    "start": "NODE_ENV=production bun run server/index.ts",
     "typecheck": "tsc --noEmit",
-    "sidecar": "bun run scripts/build-sidecar.ts",
     "tauri": "tauri",
-    "tauri:dev": "bun run sidecar && tauri dev",
-    "tauri:build": "bun run sidecar && tauri build"
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

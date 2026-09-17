@@ -56,19 +56,6 @@
   .toolbar-search { flex-basis: 100%; }
 }
 .brand-mark { filter: drop-shadow(0 5px 10px rgba(37, 99, 235, 0.3)); }
-.server-select {
-  min-width: 11rem;
-  appearance: none;
-  -webkit-appearance: none;
-  background-color: rgba(255, 255, 255, 0.12);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23eff6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
-  background-position: right 0.65rem center;
-  background-repeat: no-repeat;
-  background-size: 0.75rem;
-  color-scheme: dark;
-  padding-right: 2rem;
-}
-.server-select option { background: #ffffff; color: #1e3a8a; }
 .button-secondary { @apply border border-blue-200 bg-white text-blue-700 transition hover:border-blue-300 hover:bg-blue-50; }
 .button-range { @apply text-blue-700 transition hover:bg-blue-100; }
 
