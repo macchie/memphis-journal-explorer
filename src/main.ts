@@ -440,7 +440,32 @@ function receiptMarkup() {
     return barcode ? `<div class="my-2 flex justify-center">${barcodeMarkup(barcode[1])}</div>` : clean(row);
   }).join("\n");
   const paper = `<div style="container-type:inline-size"><div id="receipt" style="font-size:${font}" class="mx-auto w-max max-w-full whitespace-pre rounded-lg border border-slate-200 bg-white px-5 py-6 font-mono leading-[1.45] text-slate-800 shadow-sm">${content}</div></div>`;
-  return `<button class="print-receipt mb-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>${paper}`;
+  const printable = state.selected && !isVoided(state.selected) && state.selected.bl_refund !== "1";
+  const printButton = printable ? `<button class="print-receipt mb-4 flex w-full items-center justify-center gap-2 rounded-md bg-pine px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-600">${icon("printer")}Print receipt</button>` : "";
+  return `${printButton}${paper}`;
+}
+
+async function onReprint() {
+  try {
+    const billing: string[] = [];
+    const barcodes: { code: string; type: string }[] = [];
+    for (const line of state.details?.receipt ?? []) {
+      const value = String(line.val ?? "").replace(/''/g, "'");
+      const barcode = value.match(/^-?\s*Barcode:\s*(.*?)\s*--\s*Tipo:\s*(\d+)\s*$/i);
+      if (barcode) barcodes.push({ code: barcode[1], type: barcode[2] });
+      else billing.push(value);
+    }
+    const response = await fetch("http://127.0.0.1:8091/print-receipt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operator: state.selected?.sz_employee_no, billing, barcodes }),
+    });
+    if (!response.ok) throw new Error(`Print service returned ${response.status}`);
+    const result = await response.json() as { success?: boolean };
+    if (!result.success) throw new Error("Print service rejected the receipt");
+  } catch (error) {
+    console.warn("[receipt-print]", error);
+  }
 }
 
 function drawerBodyMarkup() {
@@ -691,7 +716,7 @@ function bindDrawerBody() {
     const detail = document.querySelector<HTMLDivElement>("#drawer-detail");
     if (detail) { detail.innerHTML = drawerBodyMarkup(); bindDrawerBody(); }
   }));
-  document.querySelector<HTMLButtonElement>(".print-receipt")?.addEventListener("click", () => window.print());
+  document.querySelector<HTMLButtonElement>(".print-receipt")?.addEventListener("click", onReprint);
   document.querySelectorAll<HTMLButtonElement>(".search-item").forEach((button) => button.addEventListener("click", () => searchByItem(button.dataset.term!)));
 }
 
