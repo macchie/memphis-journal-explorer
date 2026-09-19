@@ -16,6 +16,7 @@
     "tauri:build": "tauri build"
   },
   "devDependencies": {
+    "@flowbite-svelte-plugins/datatable": "^0.4.1",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@tauri-apps/cli": "^2",
@@ -23,6 +24,7 @@
     "@types/jsbarcode": "^3.11.4",
     "flowbite": "^3.1.2",
     "flowbite-svelte": "^1.33.1",
+    "flowbite-svelte-icons": "^2.0.0",
     "postcss": "^8.4.49",
     "svelte": "^5.0.0",
     "svelte-check": "^4.7.6",

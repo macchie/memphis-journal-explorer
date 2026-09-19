@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Button from "flowbite-svelte/Button.svelte";
   import Badge from "flowbite-svelte/Badge.svelte";
+  import { Table, type DataTableOptions } from "@flowbite-svelte-plugins/datatable";
   import type { ExplorerController, ExplorerState } from "../main";
 
   export let state: ExplorerState;
@@ -8,7 +8,15 @@
 
   const money = (value: unknown) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(Number(value ?? 0) / 100);
   const date = (value: string) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value));
+  const tableOptions: DataTableOptions = { searchable: false, perPage: 10, perPageSelect: [10, 25, 50] };
   $: exceptions = state.exceptions;
+  $: operatorRows = (exceptions?.operators ?? []).map((operator) => ({ operator: operator.operator, transactions: operator.txns, voids: operator.voids, refunds: operator.refunds, risk: operator.risk }));
+  $: flaggedRows = (exceptions?.flagged ?? []).map((row) => ({ date: date(row.dt_time_stamp_st), transaction: `#${row.n0_xact_no}`, operator: row.sz_employee_no, amount: money(row.n2_amount_price), flags: row.reasons.join(", ") }));
+
+  function inspectFlaggedRow(rowIndex: number) {
+    const row = exceptions?.flagged[rowIndex];
+    if (row) void controller.inspect(encodeURIComponent(controller.transactionKey(row)));
+  }
 </script>
 
 {#if state.loading}
@@ -23,14 +31,18 @@
   </div>
   <section class="mb-5 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-panel">
     <h3 class="border-b border-slate-100 px-5 py-3.5 text-sm font-semibold text-slate-800">Operator risk</h3>
-    <div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr><th class="px-4 py-2.5">Operator</th><th class="px-4 py-2.5">Txns</th><th class="px-4 py-2.5">Voids</th><th class="px-4 py-2.5">Refunds</th><th class="px-4 py-2.5">Risk</th></tr></thead><tbody>
-      {#each exceptions.operators as operator}<tr class="border-t border-slate-100"><td class="px-4 py-2.5 font-semibold text-slate-800">{operator.operator}</td><td class="px-4 py-2.5">{operator.txns}</td><td class="px-4 py-2.5">{operator.voids}</td><td class="px-4 py-2.5">{operator.refunds}</td><td class="px-4 py-2.5"><Badge rounded color="yellow">{operator.risk}</Badge></td></tr>{:else}<tr><td colspan="5" class="px-4 py-8 text-center text-slate-400">No operators with enough volume.</td></tr>{/each}
-    </tbody></table></div>
+    {#if operatorRows.length}
+      <Table items={operatorRows} dataTableOptions={tableOptions} class="min-w-full text-left text-sm" />
+    {:else}
+      <p class="px-4 py-8 text-center text-sm text-slate-400">No operators with enough volume.</p>
+    {/if}
   </section>
   <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-panel">
     <h3 class="border-b border-slate-100 px-5 py-3.5 text-sm font-semibold text-slate-800">Flagged transactions</h3>
-    <div class="overflow-x-auto"><table class="min-w-full text-left text-sm"><thead class="bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr><th class="px-5 py-3">Date</th><th class="px-5 py-3">Txn #</th><th class="px-5 py-3">Operator</th><th class="px-5 py-3">Amount</th><th class="px-5 py-3">Flags</th><th></th></tr></thead><tbody>
-      {#each exceptions.flagged as row}<tr class="border-b border-slate-100"><td class="px-5 py-3.5">{date(row.dt_time_stamp_st)}</td><td class="px-5 py-3.5 font-semibold">#{row.n0_xact_no}</td><td class="px-5 py-3.5">{row.sz_employee_no}</td><td class="px-5 py-3.5 font-semibold">{money(row.n2_amount_price)}</td><td class="px-5 py-3.5"><div class="flex flex-wrap gap-1">{#each row.reasons as reason}<Badge rounded color="yellow">{reason}</Badge>{/each}</div></td><td class="px-5 py-3.5"><Button color="alternative" size="xs" class="border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onclick={() => controller.inspect(encodeURIComponent(controller.transactionKey(row)))}>View</Button></td></tr>{:else}<tr><td colspan="6" class="px-5 py-16 text-center text-slate-500">No exceptions for these filters.</td></tr>{/each}
-    </tbody></table></div>
+    {#if flaggedRows.length}
+      <Table items={flaggedRows} dataTableOptions={tableOptions} selectable={true} multiSelect={false} onSelectRow={inspectFlaggedRow} class="min-w-full text-left text-sm" />
+    {:else}
+      <p class="px-5 py-16 text-center text-sm text-slate-500">No exceptions for these filters.</p>
+    {/if}
   </section>
 {/if}
