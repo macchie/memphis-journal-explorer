@@ -5,6 +5,7 @@
 [![Bun](https://img.shields.io/badge/Bun-1.3-000?logo=bun&logoColor=fff)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=fff)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=fff)](https://vitejs.dev)
+[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=fff)](https://svelte.dev)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss&logoColor=fff)](https://tailwindcss.com)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=fff)](https://tauri.app)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](#license)
@@ -31,7 +32,7 @@ Runs in the browser or as a native **desktop app** via [Tauri](https://tauri.app
 
 ## Tech stack
 
-Bun runtime · TypeScript · Vite · Tailwind CSS — no frontend framework, no heavy dependencies.
+Bun runtime · TypeScript · Svelte 5 · Vite · Tailwind CSS · Tauri.
 
 ## Getting started
 
@@ -78,7 +79,9 @@ The remote lookup service must allow cross-origin `POST` requests from the web a
 ## Project structure
 
 ```
-src/main.ts       Single-page frontend — query and UI logic
+src/bootstrap.ts  Svelte application entry point
+src/App.svelte    Svelte application lifecycle boundary
+src/main.ts       Transaction explorer controller and query logic
 src-tauri/        Tauri v2 desktop shell
 resources/        Database schema and project notes
 ```

@@ -9,7 +9,8 @@
     "moduleDetection": "force",
     "noEmit": true,
     "strict": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "allowJs": true
   },
   "include": ["src", "server", "vite.config.ts"]
 }
