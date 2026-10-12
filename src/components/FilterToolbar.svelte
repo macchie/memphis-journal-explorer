@@ -5,15 +5,29 @@
   import Dropdown from "flowbite-svelte/Dropdown.svelte";
   import DropdownItem from "flowbite-svelte/DropdownItem.svelte";
   import Input from "flowbite-svelte/Input.svelte";
-  import Select from "flowbite-svelte/Select.svelte";
   import { intlTag, t } from "../i18n";
   import type { ExplorerController, ExplorerState } from "../main";
 
   export let state: ExplorerState;
   export let controller: ExplorerController;
 
-  // Reactive (not a function) so the dependency on `state` is visible to Svelte —
-  // otherwise the checkbox ticks and the button label never re-render on toggle.
+  const typeOptions = [
+    { value: "",       labelKey: "filters.type.all"    },
+    { value: "sale",   labelKey: "filters.type.sale"   },
+    { value: "refund", labelKey: "filters.type.refund" },
+    { value: "voided", labelKey: "filters.type.voided" },
+  ];
+  let typeOpen = false;
+
+  function selectType(value: string) {
+    controller.updateFilter("type", value);
+    typeOpen = false;
+  }
+
+  // Reactive (not functions) so the dependency on `state` is visible to Svelte —
+  // otherwise the trigger labels and selection indicators never re-render on change.
+  $: currentType = state.filters.type ?? "";
+  $: currentTypeLabel = $t(typeOptions.find((option) => option.value === currentType)?.labelKey ?? "filters.type.all");
   $: selectedPayments = (state.filters.paymentTypes ?? "").split(",").filter(Boolean);
   const toDate = (value: string | undefined) => value ? new Date(`${value}T12:00:00`) : undefined;
   const toIsoDate = (value: Date | undefined) => value ? [value.getFullYear(), String(value.getMonth() + 1).padStart(2, "0"), String(value.getDate()).padStart(2, "0")].join("-") : "";
@@ -62,18 +76,33 @@
         />
       </div>
       <div class="col-span-6 lg:col-span-2">
-        <Select
-          size="sm"
-          name="type"
-          value={state.filters.type ?? ""}
-          onchange={onInput}
+        <Button
+          type="button"
+          color="alternative"
+          class="ui-btn ui-btn--block ui-btn--between ui-btn--control"
           aria-label={$t("filters.type.aria")}
         >
-          <option value="">{$t("filters.type.all")}</option>
-          <option value="sale">{$t("filters.type.sale")}</option>
-          <option value="refund">{$t("filters.type.refund")}</option>
-          <option value="voided">{$t("filters.type.voided")}</option>
-        </Select>
+          <span class="truncate">{currentTypeLabel}</span>
+          <svg class="ms-1 h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 0 1 1.09 1.03l-4.26 4.52a.75.75 0 0 1-1.09 0L5.2 8.26a.75.75 0 0 1 .03-1.05Z" clip-rule="evenodd" />
+          </svg>
+        </Button>
+        <Dropdown simple placement="bottom-start" bind:isOpen={typeOpen} class="max-h-80 overflow-y-auto">
+          {#each typeOptions as option}
+            <DropdownItem onclick={() => selectType(option.value)} class="ui-dropdown-item">
+              <svg
+                class="h-5 w-5 shrink-0"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+                style={option.value === currentType ? "color: var(--accent)" : "visibility: hidden"}
+              >
+                <path fill-rule="evenodd" d="M16.70 5.29a1 1 0 0 1 0 1.42l-7.49 7.49a1 1 0 0 1-1.42 0L3.30 10.70a1 1 0 1 1 1.42-1.42l3.08 3.08 6.78-6.78a1 1 0 0 1 1.42 0Z" clip-rule="evenodd" />
+              </svg>
+              <span style={option.value === currentType ? "color: var(--accent); font-weight: 600" : ""}>{$t(option.labelKey)}</span>
+            </DropdownItem>
+          {/each}
+        </Dropdown>
       </div>
       <div class="col-span-6 lg:col-span-4 filter-date-compact">
         <Datepicker
