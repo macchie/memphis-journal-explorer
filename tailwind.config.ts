@@ -3,15 +3,7 @@ import type { Config } from "tailwindcss";
 export default {
   theme: {
     extend: {
-      fontFamily: {
-        display: ["DM Sans", "sans-serif"],
-        body: ["DM Sans", "sans-serif"],
-      },
       colors: {
-        ink: "#1e3a8a",
-        pine: "#3b82f6",
-        mist: "#eff6ff",
-        clay: "#c84d3d",
         // Flowbite components (Button/Input/Select/Checkbox) theme their focus rings
         // and checked states with `primary-*`, so the scale must be defined for them
         // to render. Mapped to Tailwind blue to match the app's accent.
@@ -28,9 +20,6 @@ export default {
           900: "#1e3a8a",
           950: "#172554",
         },
-      },
-      boxShadow: {
-        panel: "0 10px 30px rgba(30, 64, 175, 0.1)",
       },
     },
   },

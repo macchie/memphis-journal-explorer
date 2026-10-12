@@ -25,7 +25,12 @@
 
 <svelte:window onkeydown={(event) => explorer?.onKeydown(event)} />
 
-<AppHeader {activeView} onViewChange={changeView} />
+<AppHeader
+  {activeView}
+  onViewChange={changeView}
+  onRefresh={() => explorer?.refresh()}
+  loading={(revision >= 0 && explorer?.state.loading) ?? false}
+/>
 
 {#if explorer}
   <Explorer state={explorer.state} controller={explorer} {revision} />
