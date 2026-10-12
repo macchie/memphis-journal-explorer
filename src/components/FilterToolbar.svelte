@@ -12,7 +12,9 @@
   export let state: ExplorerState;
   export let controller: ExplorerController;
 
-  const paymentTypes = () => (state.filters.paymentTypes ?? "").split(",").filter(Boolean);
+  // Reactive (not a function) so the dependency on `state` is visible to Svelte —
+  // otherwise the checkbox ticks and the button label never re-render on toggle.
+  $: selectedPayments = (state.filters.paymentTypes ?? "").split(",").filter(Boolean);
   const toDate = (value: string | undefined) => value ? new Date(`${value}T12:00:00`) : undefined;
   const toIsoDate = (value: Date | undefined) => value ? [value.getFullYear(), String(value.getMonth() + 1).padStart(2, "0"), String(value.getDate()).padStart(2, "0")].join("-") : "";
 
@@ -66,8 +68,8 @@
           value={state.filters.type ?? ""}
           onchange={onInput}
           aria-label={$t("filters.type.aria")}
-          placeholder={$t("filters.type.all")}
         >
+          <option value="">{$t("filters.type.all")}</option>
           <option value="sale">{$t("filters.type.sale")}</option>
           <option value="refund">{$t("filters.type.refund")}</option>
           <option value="voided">{$t("filters.type.voided")}</option>
@@ -98,16 +100,16 @@
         <Button
           type="button"
           color="alternative"
-          class="ui-btn ui-btn--block ui-btn--between"
+          class="ui-btn ui-btn--block ui-btn--between ui-btn--control"
           aria-label={$t("filters.payment.aria")}
         >
           <span class="truncate">
-            {#if paymentTypes().length === 0}
+            {#if selectedPayments.length === 0}
               {$t("filters.payment.placeholder")}
-            {:else if paymentTypes().length === 1}
+            {:else if selectedPayments.length === 1}
               {$t("filters.payment.one", { count: 1 })}
             {:else}
-              {$t("filters.payment.many", { count: paymentTypes().length })}
+              {$t("filters.payment.many", { count: selectedPayments.length })}
             {/if}
           </span>
           <svg class="ms-1 h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -117,7 +119,7 @@
         <Dropdown simple placement="bottom-start" class="max-h-80 overflow-y-auto">
           {#each state.facets?.paymentTypes ?? [] as paymentType}
             <DropdownItem onclick={() => controller.togglePaymentType(paymentType)} class="ui-dropdown-item">
-              <Checkbox class="pointer-events-none h-5 w-5" checked={paymentTypes().includes(paymentType)} />
+              <Checkbox class="pointer-events-none h-5 w-5" checked={selectedPayments.includes(paymentType)} />
               <span>{paymentType}</span>
             </DropdownItem>
           {:else}

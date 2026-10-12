@@ -101,7 +101,7 @@
                       <thead style="background: var(--panel-alt); text-align: left;">
                         <tr>
                           {#each section.columns as column}
-                            <th class="px-4 py-3 text-[0.8125rem] font-semibold uppercase tracking-wide" style="color: var(--text-subtle)">{$t(column[1])}</th>
+                            <th class="px-4 py-3 text-sm font-semibold uppercase tracking-wide" style="color: var(--text-subtle)">{$t(column[1])}</th>
                           {/each}
                         </tr>
                       </thead>

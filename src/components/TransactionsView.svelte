@@ -2,7 +2,6 @@
   import Badge from "flowbite-svelte/Badge.svelte";
   import Button from "flowbite-svelte/Button.svelte";
   import Skeleton from "flowbite-svelte/Skeleton.svelte";
-  import { Table, type DataTableOptions } from "@flowbite-svelte-plugins/datatable";
   import { ArrowDownOutline, ArrowUpDownOutline, ArrowUpOutline, ChevronLeftOutline, ChevronRightOutline, EyeOutline } from "flowbite-svelte-icons";
   import { fmt, t } from "../i18n";
   import type { ExplorerController, ExplorerState } from "../main";
@@ -13,7 +12,6 @@
 
   $: money = $fmt.money;
   $: date  = $fmt.date;
-  const tableOptions: DataTableOptions = { searchable: false, paging: false, sortable: false };
   const sortColumns = [
     { key: "date",     labelKey: "txn.col.datetime" },
     { key: "operator", labelKey: "txn.col.operator" },
@@ -63,7 +61,8 @@
     </div>
 
   {:else if state.rows.length}
-    <Table dataTableOptions={tableOptions} divClass="relative overflow-x-auto">
+    <div class="relative overflow-x-auto">
+      <table class="dark-table">
       <thead>
         <tr>
           {#each sortColumns as column}
@@ -115,7 +114,8 @@
           </tr>
         {/each}
       </tbody>
-    </Table>
+      </table>
+    </div>
 
   {:else}
     <p class="empty-state">{state.error || $t("txn.empty")}</p>
