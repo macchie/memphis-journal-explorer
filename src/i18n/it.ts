@@ -2,8 +2,8 @@ import type { Messages } from "./index";
 
 export const it: Messages = {
   // App / brand
-  "app.title": "Sales Explorer",
-  "app.brand": "Sales Explorer",
+  "app.title": "Registro Transazioni",
+  "app.brand": "Registro Transazioni",
 
   // Header
   "header.tab.transactions": "Transazioni",
